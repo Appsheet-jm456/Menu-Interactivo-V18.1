@@ -2241,3 +2241,798 @@ function obtenerDatosCliente(idCliente) {
 
 Logger.log('V16 Funciones con unificación de identidad cargadas');
 
+// ============================================
+// FASE 9.1 - API CRUD ADMINISTRATIVA
+// Gestion de Usuarios y Clientes
+// CloudPyme POS V18+ | 2026-01-26
+// ============================================
+
+/**
+ * Columnas de la hoja USUARIOS:
+ * 0: ID | 1: Email | 2: Password | 3: Nombre | 4: Telefono
+ * 5: Direccion | 6: Fecha_Registro | 7: Rol | 8: Activo | 9: Permisos | 10: Pin_Acceso
+ *
+ * Columnas adicionales para soft delete:
+ * 11: Fecha_Baja | 12: Usuario_Que_Elimino
+ */
+
+// Roles permitidos para usuarios internos
+const ROLES_ADMIN_PERMITIDOS = ['Administrador', 'Mesero', 'Cocina', 'Domiciliario'];
+
+/**
+ * FUNCION PRINCIPAL: Gestion de Usuarios Internos
+ * @param {string} accion - 'leer', 'guardar', 'eliminar'
+ * @param {Object} datos - Datos del usuario o configuracion
+ * @param {Object} usuarioSolicitante - Usuario que realiza la accion (para validar permisos)
+ * @returns {Object} {success: boolean, data/error: any}
+ */
+function adminGestionarUsuarios(accion, datos, usuarioSolicitante) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    // Validar que el usuario solicitante sea Administrador
+    if (!usuarioSolicitante || !esRolSuperAdmin(usuarioSolicitante.rol)) {
+      Logger.log('⛔ Acceso denegado: Usuario sin permisos de administrador');
+      return { success: false, error: 'Acceso denegado. Se requieren permisos de Administrador.' };
+    }
+
+    lock.waitLock(5000);
+    Logger.log('🔧 ADMIN - Gestion Usuarios | Accion: ' + accion);
+
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+
+    if (!sheet) {
+      return { success: false, error: 'Hoja USUARIOS no encontrada' };
+    }
+
+    var resultado;
+
+    switch (accion.toLowerCase()) {
+      case 'leer':
+        resultado = _adminLeerUsuarios(sheet);
+        break;
+      case 'guardar':
+        resultado = _adminGuardarUsuario(sheet, datos, usuarioSolicitante);
+        break;
+      case 'eliminar':
+        resultado = _adminEliminarUsuario(sheet, datos, usuarioSolicitante);
+        break;
+      default:
+        return { success: false, error: 'Accion no reconocida: ' + accion };
+    }
+
+    SpreadsheetApp.flush(); // Asegurar escritura atomica
+    return resultado;
+
+  } catch (error) {
+    Logger.log('❌ Error en adminGestionarUsuarios: ' + error.toString());
+    return { success: false, error: 'Error interno: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * LEER: Obtiene todos los usuarios internos (roles admin)
+ * SEGURIDAD: Oculta contraseñas y PINs
+ */
+function _adminLeerUsuarios(sheet) {
+  try {
+    var data = sheet.getDataRange().getValues();
+    var usuarios = [];
+
+    // Empezar desde fila 1 (saltando encabezados)
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var rol = String(row[7] || '').trim();
+
+      // Solo incluir usuarios con roles internos (no clientes de App)
+      if (esRolInterno(rol) || rol === 'Mesero') {
+        usuarios.push({
+          id: String(row[0] || ''),
+          email: String(row[1] || ''),
+          password: row[2] ? '******' : '', // Ocultar password
+          nombre: String(row[3] || ''),
+          telefono: String(row[4] || ''),
+          direccion: String(row[5] || ''),
+          fechaRegistro: row[6] ? (row[6] instanceof Date ? row[6].toISOString() : String(row[6])) : '',
+          rol: rol,
+          activo: row[8] === true || row[8] === 'true' || row[8] === 'TRUE',
+          permisos: String(row[9] || ''),
+          pinAcceso: row[10] ? '****' : '', // Ocultar PIN
+          fechaBaja: row[11] ? (row[11] instanceof Date ? row[11].toISOString() : String(row[11])) : '',
+          usuarioQueElimino: String(row[12] || ''),
+          filaSheet: i + 1 // Para referencia interna
+        });
+      }
+    }
+
+    // Ordenar: Activos primero, luego por nombre
+    usuarios.sort(function(a, b) {
+      if (a.activo !== b.activo) {
+        return a.activo ? -1 : 1; // Activos primero
+      }
+      return (a.nombre || '').localeCompare(b.nombre || '');
+    });
+
+    Logger.log('✅ Usuarios internos leidos: ' + usuarios.length);
+    return { success: true, data: usuarios, total: usuarios.length };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminLeerUsuarios: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * GUARDAR: Crear o actualizar usuario interno
+ * Valida email/telefono unicos, maneja credenciales segun rol
+ */
+function _adminGuardarUsuario(sheet, datos, usuarioSolicitante) {
+  try {
+    // Validar datos requeridos
+    if (!datos) {
+      return { success: false, error: 'Datos de usuario requeridos' };
+    }
+
+    var nombre = String(datos.nombre || '').trim();
+    var email = String(datos.email || '').trim().toLowerCase();
+    var telefono = String(datos.telefono || '').replace(/\D/g, '').trim();
+    var rol = String(datos.rol || '').trim();
+    var credencial = String(datos.credencial || '').trim();
+    var activo = datos.activo !== false && datos.activo !== 'false';
+    var idActual = datos.idActual ? String(datos.idActual).trim() : null;
+    var direccion = String(datos.direccion || '').trim();
+
+    // ═══════════════════════════════════════════
+    // VALIDACIONES OBLIGATORIAS
+    // ═══════════════════════════════════════════
+
+    // Validar nombre
+    if (!nombre || nombre.length < 2) {
+      return { success: false, error: 'El nombre es obligatorio (minimo 2 caracteres)' };
+    }
+
+    // Validar rol permitido
+    if (!ROLES_ADMIN_PERMITIDOS.includes(rol)) {
+      return { success: false, error: 'Rol no valido. Permitidos: ' + ROLES_ADMIN_PERMITIDOS.join(', ') };
+    }
+
+    // Validar email (obligatorio para todos excepto Mesero)
+    if (rol !== 'Mesero') {
+      if (!email || !_validarFormatoEmail(email)) {
+        return { success: false, error: 'Email valido es obligatorio para rol ' + rol };
+      }
+    }
+
+    // Validar telefono (numerico, minimo 7 digitos)
+    if (telefono && telefono.length < 7) {
+      return { success: false, error: 'Telefono debe tener minimo 7 digitos' };
+    }
+
+    // Validar credencial segun rol
+    var validacionCredencial = _validarCredencialSegunRol(rol, credencial, idActual);
+    if (!validacionCredencial.valido) {
+      return { success: false, error: validacionCredencial.error };
+    }
+
+    // Obtener datos actuales para validar unicidad
+    var data = sheet.getDataRange().getValues();
+
+    // Validar email unico (si no es Mesero)
+    if (rol !== 'Mesero' && email) {
+      for (var i = 1; i < data.length; i++) {
+        var emailExistente = String(data[i][1] || '').trim().toLowerCase();
+        var idExistente = String(data[i][0] || '').trim();
+
+        if (emailExistente === email && idExistente !== idActual) {
+          return { success: false, error: 'El email "' + email + '" ya esta registrado' };
+        }
+      }
+    }
+
+    // Validar telefono unico (si se proporciona)
+    if (telefono) {
+      for (var j = 1; j < data.length; j++) {
+        var telExistente = String(data[j][4] || '').replace(/\D/g, '').trim();
+        var idExistenteTel = String(data[j][0] || '').trim();
+
+        if (telExistente === telefono && idExistenteTel !== idActual) {
+          return { success: false, error: 'El telefono "' + telefono + '" ya esta registrado' };
+        }
+      }
+    }
+
+    // Validar PIN unico (si es Mesero o Admin)
+    if ((rol === 'Mesero' || rol === 'Administrador') && credencial) {
+      var pinValidacion = _validarPinUnico(sheet, data, credencial, idActual);
+      if (!pinValidacion.valido) {
+        return { success: false, error: pinValidacion.error };
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    // PREPARAR DATOS SEGUN ROL
+    // ═══════════════════════════════════════════
+
+    var password = '';
+    var pinAcceso = '';
+
+    // Logica de credenciales segun rol
+    if (rol === 'Mesero') {
+      // Mesero: Solo PIN, sin password
+      pinAcceso = credencial;
+      password = '';
+    } else if (rol === 'Cocina' || rol === 'Domiciliario') {
+      // Cocina/Domiciliario: Solo password, sin PIN
+      password = credencial;
+      pinAcceso = '';
+    } else if (rol === 'Administrador') {
+      // Administrador: Ambos (PIN y Password)
+      // Credencial principal va a password, y tambien a PIN
+      password = credencial;
+      pinAcceso = credencial.length === 4 ? credencial : '';
+
+      // Si se proporciona PIN separado en datos.pin
+      if (datos.pin && String(datos.pin).length === 4) {
+        pinAcceso = String(datos.pin);
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    // CREAR O ACTUALIZAR
+    // ═══════════════════════════════════════════
+
+    if (idActual) {
+      // ACTUALIZAR usuario existente
+      var filaActualizar = -1;
+
+      for (var k = 1; k < data.length; k++) {
+        if (String(data[k][0]).trim() === idActual) {
+          filaActualizar = k + 1; // +1 porque getRange es 1-indexed
+          break;
+        }
+      }
+
+      if (filaActualizar === -1) {
+        return { success: false, error: 'Usuario con ID "' + idActual + '" no encontrado' };
+      }
+
+      // Actualizar campos (mantener password/pin si no se proporciona nueva credencial)
+      sheet.getRange(filaActualizar, 2).setValue(email); // Email
+
+      // Solo actualizar password si se proporciona nueva credencial
+      if (credencial) {
+        sheet.getRange(filaActualizar, 3).setValue(password);
+      }
+
+      sheet.getRange(filaActualizar, 4).setValue(nombre);
+      sheet.getRange(filaActualizar, 5).setValue(telefono);
+      sheet.getRange(filaActualizar, 6).setValue(direccion);
+      sheet.getRange(filaActualizar, 8).setValue(rol);
+      sheet.getRange(filaActualizar, 9).setValue(activo);
+
+      // Solo actualizar PIN si se proporciona nueva credencial
+      if (credencial) {
+        sheet.getRange(filaActualizar, 11).setValue(pinAcceso);
+      }
+
+      Logger.log('✅ Usuario actualizado: ' + idActual + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: idActual, nombre: nombre, rol: rol, accion: 'actualizado' },
+        message: 'Usuario "' + nombre + '" actualizado correctamente'
+      };
+
+    } else {
+      // CREAR nuevo usuario
+      var timestamp = new Date().getTime();
+      var nuevoId = 'USR_' + timestamp;
+      var fechaRegistro = obtenerTimestampColombia();
+
+      // Asegurar que hay suficientes columnas (13 para incluir campos de baja)
+      var headers = data[0];
+      if (headers.length < 13) {
+        // Agregar columnas faltantes si no existen
+        if (headers.length <= 11) {
+          sheet.getRange(1, 12).setValue('Fecha_Baja');
+        }
+        if (headers.length <= 12) {
+          sheet.getRange(1, 13).setValue('Usuario_Que_Elimino');
+        }
+      }
+
+      var nuevaFila = [
+        nuevoId,           // 0: ID
+        email,             // 1: Email
+        password,          // 2: Password
+        nombre,            // 3: Nombre
+        telefono,          // 4: Telefono
+        direccion,         // 5: Direccion
+        fechaRegistro,     // 6: Fecha_Registro
+        rol,               // 7: Rol
+        activo,            // 8: Activo
+        '',                // 9: Permisos
+        pinAcceso,         // 10: Pin_Acceso
+        '',                // 11: Fecha_Baja
+        ''                 // 12: Usuario_Que_Elimino
+      ];
+
+      sheet.appendRow(nuevaFila);
+
+      Logger.log('✅ Usuario creado: ' + nuevoId + ' | Rol: ' + rol + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: nuevoId, nombre: nombre, rol: rol, accion: 'creado' },
+        message: 'Usuario "' + nombre + '" creado correctamente'
+      };
+    }
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminGuardarUsuario: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * ELIMINAR: Soft delete - Marca como inactivo
+ */
+function _adminEliminarUsuario(sheet, datos, usuarioSolicitante) {
+  try {
+    var idEliminar = datos.id ? String(datos.id).trim() : null;
+
+    if (!idEliminar) {
+      return { success: false, error: 'ID de usuario requerido para eliminar' };
+    }
+
+    // No permitir auto-eliminacion
+    if (idEliminar === usuarioSolicitante.id) {
+      return { success: false, error: 'No puede desactivar su propia cuenta' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+    var filaEliminar = -1;
+    var nombreUsuario = '';
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === idEliminar) {
+        filaEliminar = i + 1;
+        nombreUsuario = String(data[i][3] || 'Usuario');
+        break;
+      }
+    }
+
+    if (filaEliminar === -1) {
+      return { success: false, error: 'Usuario con ID "' + idEliminar + '" no encontrado' };
+    }
+
+    // Soft delete: Marcar como inactivo
+    var fechaBaja = obtenerTimestampColombia();
+
+    sheet.getRange(filaEliminar, 9).setValue(false); // Activo = FALSE
+    sheet.getRange(filaEliminar, 12).setValue(fechaBaja); // Fecha_Baja
+    sheet.getRange(filaEliminar, 13).setValue(usuarioSolicitante.id + ' - ' + usuarioSolicitante.nombre); // Usuario_Que_Elimino
+
+    Logger.log('✅ Usuario desactivado: ' + idEliminar + ' | Por: ' + usuarioSolicitante.nombre);
+    return {
+      success: true,
+      data: { id: idEliminar, nombre: nombreUsuario, accion: 'desactivado' },
+      message: 'Usuario "' + nombreUsuario + '" desactivado correctamente'
+    };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminEliminarUsuario: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Validar formato de email
+ */
+function _validarFormatoEmail(email) {
+  var regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(email);
+}
+
+/**
+ * Validar credencial segun el rol
+ */
+function _validarCredencialSegunRol(rol, credencial, idActual) {
+  // Si es actualizacion y no se proporciona credencial, es valido (mantiene la anterior)
+  if (idActual && !credencial) {
+    return { valido: true };
+  }
+
+  // Para nuevos usuarios, credencial es obligatoria
+  if (!idActual && !credencial) {
+    return { valido: false, error: 'Credencial obligatoria para nuevo usuario' };
+  }
+
+  if (!credencial) {
+    return { valido: true };
+  }
+
+  if (rol === 'Mesero') {
+    // PIN de 4 digitos
+    if (!/^\d{4}$/.test(credencial)) {
+      return { valido: false, error: 'El PIN para Mesero debe ser de 4 digitos numericos' };
+    }
+  } else if (rol === 'Cocina' || rol === 'Domiciliario') {
+    // Password minimo 4 caracteres
+    if (credencial.length < 4) {
+      return { valido: false, error: 'La contraseña debe tener minimo 4 caracteres' };
+    }
+  } else if (rol === 'Administrador') {
+    // Password minimo 4 caracteres
+    if (credencial.length < 4) {
+      return { valido: false, error: 'La contraseña de Administrador debe tener minimo 4 caracteres' };
+    }
+  }
+
+  return { valido: true };
+}
+
+/**
+ * Validar que el PIN no este duplicado
+ */
+function _validarPinUnico(sheet, data, pin, idActual) {
+  for (var i = 1; i < data.length; i++) {
+    var pinExistente = String(data[i][10] || '').trim();
+    var idExistente = String(data[i][0] || '').trim();
+    var activo = data[i][8];
+
+    // Solo validar contra usuarios activos
+    if (activo === true || activo === 'true') {
+      if (pinExistente === pin && idExistente !== idActual) {
+        return { valido: false, error: 'El PIN "' + pin + '" ya esta asignado a otro usuario' };
+      }
+    }
+  }
+  return { valido: true };
+}
+
+// ============================================
+// FUNCION: Gestion de Clientes
+// ============================================
+
+/**
+ * Columnas de la hoja CLIENTES:
+ * 0: ID_Key_Clientes | 1: Nombre_Completo | 2: Celular | 3: Domicilio
+ * 4: Notas_Adicionales | 5: Fecha_Registro | 6: Email | 7: Password
+ * 8: Rol | 9: Activo
+ */
+
+/**
+ * FUNCION PRINCIPAL: Gestion de Clientes
+ * @param {string} accion - 'leer', 'guardar', 'eliminar'
+ * @param {Object} datos - Datos del cliente
+ * @param {Object} usuarioSolicitante - Usuario que realiza la accion
+ * @returns {Object} {success: boolean, data/error: any}
+ */
+function adminGestionarClientes(accion, datos, usuarioSolicitante) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    // Validar permisos de administrador
+    if (!usuarioSolicitante || !esRolSuperAdmin(usuarioSolicitante.rol)) {
+      Logger.log('⛔ Acceso denegado: Usuario sin permisos de administrador');
+      return { success: false, error: 'Acceso denegado. Se requieren permisos de Administrador.' };
+    }
+
+    lock.waitLock(5000);
+    Logger.log('🔧 ADMIN - Gestion Clientes | Accion: ' + accion);
+
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+
+    if (!sheet) {
+      // Crear hoja si no existe
+      sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
+      var headers = ['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro', 'Email', 'Password', 'Rol', 'Activo'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      Logger.log('✅ Hoja CLIENTES creada');
+    }
+
+    var resultado;
+
+    switch (accion.toLowerCase()) {
+      case 'leer':
+        resultado = _adminLeerClientes(sheet, datos);
+        break;
+      case 'guardar':
+        resultado = _adminGuardarCliente(sheet, datos, usuarioSolicitante);
+        break;
+      case 'eliminar':
+        resultado = _adminEliminarCliente(sheet, datos, usuarioSolicitante);
+        break;
+      default:
+        return { success: false, error: 'Accion no reconocida: ' + accion };
+    }
+
+    SpreadsheetApp.flush();
+    return resultado;
+
+  } catch (error) {
+    Logger.log('❌ Error en adminGestionarClientes: ' + error.toString());
+    return { success: false, error: 'Error interno: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * LEER: Obtiene lista de clientes con paginacion opcional
+ */
+function _adminLeerClientes(sheet, filtros) {
+  try {
+    var data = sheet.getDataRange().getValues();
+    var clientes = [];
+
+    // Parametros de paginacion
+    var pagina = (filtros && filtros.pagina) ? parseInt(filtros.pagina) : 1;
+    var porPagina = (filtros && filtros.porPagina) ? parseInt(filtros.porPagina) : 50;
+    var busqueda = (filtros && filtros.busqueda) ? String(filtros.busqueda).toLowerCase().trim() : '';
+
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var nombre = String(row[1] || '').toLowerCase();
+      var celular = String(row[2] || '');
+      var email = String(row[6] || '').toLowerCase();
+
+      // Filtro de busqueda
+      if (busqueda) {
+        if (nombre.indexOf(busqueda) === -1 &&
+            celular.indexOf(busqueda) === -1 &&
+            email.indexOf(busqueda) === -1) {
+          continue;
+        }
+      }
+
+      clientes.push({
+        id: String(row[0] || ''),
+        nombre: String(row[1] || ''),
+        celular: String(row[2] || ''),
+        domicilio: String(row[3] || ''),
+        notas: String(row[4] || ''),
+        fechaRegistro: row[5] ? (row[5] instanceof Date ? row[5].toISOString() : String(row[5])) : '',
+        email: String(row[6] || ''),
+        rol: String(row[8] || 'Cliente'),
+        activo: row[9] !== false && row[9] !== 'false' && row[9] !== 'FALSE',
+        filaSheet: i + 1
+      });
+    }
+
+    // Ordenar por nombre
+    clientes.sort(function(a, b) {
+      return (a.nombre || '').localeCompare(b.nombre || '');
+    });
+
+    // Calcular paginacion
+    var totalClientes = clientes.length;
+    var totalPaginas = Math.ceil(totalClientes / porPagina);
+    var inicio = (pagina - 1) * porPagina;
+    var fin = inicio + porPagina;
+    var clientesPaginados = clientes.slice(inicio, fin);
+
+    Logger.log('✅ Clientes leidos: ' + clientesPaginados.length + ' de ' + totalClientes);
+    return {
+      success: true,
+      data: clientesPaginados,
+      total: totalClientes,
+      pagina: pagina,
+      totalPaginas: totalPaginas,
+      porPagina: porPagina
+    };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminLeerClientes: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * GUARDAR: Crear o actualizar cliente
+ */
+function _adminGuardarCliente(sheet, datos, usuarioSolicitante) {
+  try {
+    if (!datos) {
+      return { success: false, error: 'Datos de cliente requeridos' };
+    }
+
+    var nombre = String(datos.nombre || '').trim();
+    var celular = String(datos.celular || '').replace(/\D/g, '').trim();
+    var domicilio = String(datos.domicilio || '').trim();
+    var email = String(datos.email || '').trim().toLowerCase();
+    var notas = String(datos.notas || '').trim();
+    var idActual = datos.id ? String(datos.id).trim() : null;
+
+    // Validaciones
+    if (!nombre || nombre.length < 2) {
+      return { success: false, error: 'Nombre es obligatorio (minimo 2 caracteres)' };
+    }
+
+    if (!celular || celular.length < 7) {
+      return { success: false, error: 'Celular es obligatorio (minimo 7 digitos)' };
+    }
+
+    // Validar celular unico
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var celularExistente = String(data[i][2] || '').replace(/\D/g, '').trim();
+      var idExistente = String(data[i][0] || '').trim();
+
+      if (celularExistente === celular && idExistente !== idActual) {
+        return { success: false, error: 'El celular "' + celular + '" ya esta registrado' };
+      }
+    }
+
+    if (idActual) {
+      // ACTUALIZAR cliente existente
+      var filaActualizar = -1;
+
+      for (var j = 1; j < data.length; j++) {
+        if (String(data[j][0]).trim() === idActual) {
+          filaActualizar = j + 1;
+          break;
+        }
+      }
+
+      if (filaActualizar === -1) {
+        return { success: false, error: 'Cliente con ID "' + idActual + '" no encontrado' };
+      }
+
+      // Actualizar campos editables (NO modificar ID ni Fecha_Registro)
+      sheet.getRange(filaActualizar, 2).setValue(nombre);
+      sheet.getRange(filaActualizar, 3).setValue(celular);
+      sheet.getRange(filaActualizar, 4).setValue(domicilio);
+      sheet.getRange(filaActualizar, 5).setValue(notas);
+      sheet.getRange(filaActualizar, 7).setValue(email);
+
+      Logger.log('✅ Cliente actualizado: ' + idActual + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: idActual, nombre: nombre, accion: 'actualizado' },
+        message: 'Cliente "' + nombre + '" actualizado correctamente'
+      };
+
+    } else {
+      // CREAR nuevo cliente
+      var nuevoId = celular; // Usar celular como ID (patron existente)
+      var fechaRegistro = obtenerTimestampColombia();
+
+      var nuevaFila = [
+        nuevoId,           // 0: ID_Key_Clientes
+        nombre,            // 1: Nombre_Completo
+        celular,           // 2: Celular
+        domicilio,         // 3: Domicilio
+        notas,             // 4: Notas_Adicionales
+        fechaRegistro,     // 5: Fecha_Registro
+        email,             // 6: Email
+        '',                // 7: Password
+        'Cliente',         // 8: Rol
+        true               // 9: Activo
+      ];
+
+      sheet.appendRow(nuevaFila);
+
+      Logger.log('✅ Cliente creado: ' + nuevoId + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: nuevoId, nombre: nombre, accion: 'creado' },
+        message: 'Cliente "' + nombre + '" creado correctamente'
+      };
+    }
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminGuardarCliente: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * ELIMINAR: Soft delete de cliente
+ */
+function _adminEliminarCliente(sheet, datos, usuarioSolicitante) {
+  try {
+    var idEliminar = datos.id ? String(datos.id).trim() : null;
+
+    if (!idEliminar) {
+      return { success: false, error: 'ID de cliente requerido para eliminar' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+    var filaEliminar = -1;
+    var nombreCliente = '';
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === idEliminar) {
+        filaEliminar = i + 1;
+        nombreCliente = String(data[i][1] || 'Cliente');
+        break;
+      }
+    }
+
+    if (filaEliminar === -1) {
+      return { success: false, error: 'Cliente con ID "' + idEliminar + '" no encontrado' };
+    }
+
+    // Soft delete: Marcar como inactivo
+    sheet.getRange(filaEliminar, 10).setValue(false); // Activo = FALSE
+
+    Logger.log('✅ Cliente desactivado: ' + idEliminar + ' | Por: ' + usuarioSolicitante.nombre);
+    return {
+      success: true,
+      data: { id: idEliminar, nombre: nombreCliente, accion: 'desactivado' },
+      message: 'Cliente "' + nombreCliente + '" desactivado correctamente'
+    };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminEliminarCliente: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * FUNCION AUXILIAR: Reactivar usuario/cliente desactivado
+ */
+function adminReactivarEntidad(tipo, id, usuarioSolicitante) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    if (!usuarioSolicitante || !esRolSuperAdmin(usuarioSolicitante.rol)) {
+      return { success: false, error: 'Acceso denegado' };
+    }
+
+    lock.waitLock(5000);
+
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet;
+    var colActivo;
+
+    if (tipo === 'usuario') {
+      sheet = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+      colActivo = 9; // Columna Activo en USUARIOS
+    } else if (tipo === 'cliente') {
+      sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+      colActivo = 10; // Columna Activo en CLIENTES
+    } else {
+      return { success: false, error: 'Tipo no valido. Use "usuario" o "cliente"' };
+    }
+
+    if (!sheet) {
+      return { success: false, error: 'Hoja no encontrada' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === String(id).trim()) {
+        sheet.getRange(i + 1, colActivo).setValue(true);
+
+        // Limpiar fecha de baja si es usuario
+        if (tipo === 'usuario') {
+          sheet.getRange(i + 1, 12).setValue(''); // Fecha_Baja
+          sheet.getRange(i + 1, 13).setValue(''); // Usuario_Que_Elimino
+        }
+
+        SpreadsheetApp.flush();
+        Logger.log('✅ ' + tipo + ' reactivado: ' + id);
+        return { success: true, message: tipo + ' reactivado correctamente' };
+      }
+    }
+
+    return { success: false, error: tipo + ' no encontrado' };
+
+  } catch (error) {
+    Logger.log('❌ Error en adminReactivarEntidad: ' + error.toString());
+    return { success: false, error: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+Logger.log('✅ FASE 9.1 - API CRUD Administrativa cargada correctamente');
+
