@@ -1,6 +1,8 @@
 // ============================================
-// CÓDIGO BACKEND - CLOUDPYME POS V16
-// Refactorizado: Codificación UTF-8 Corregida
+// CODIGO BACKEND - CLOUDPYME POS V18.1
+// Mejoras:
+// - obtenerItemsPedidoMesero ahora devuelve estado (Estado_Logistico)
+// - Sincronizacion badge cocina en panel meseros
 // ============================================
 
 const CONFIG = {
@@ -1691,12 +1693,13 @@ function obtenerItemsPedidoMesero(idPedido) {
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
     const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
-    
-    if (!sheetDetalle || !sheetProductos) return { success: false, items: [] };
-    
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+
+    if (!sheetDetalle || !sheetProductos) return { success: false, items: [], estado: 'Solicitado' };
+
     const dataDetalle = sheetDetalle.getDataRange().getValues();
     const dataProductos = sheetProductos.getDataRange().getValues();
-    
+
     var productosMap = {};
     for (var i = 1; i < dataProductos.length; i++) {
       productosMap[String(dataProductos[i][0]).trim().toUpperCase()] = {
@@ -1704,15 +1707,15 @@ function obtenerItemsPedidoMesero(idPedido) {
         precio: dataProductos[i][4]
       };
     }
-    
+
     const idPedidoStr = String(idPedido).trim().toUpperCase();
     const items = [];
-    
+
     for (var j = 1; j < dataDetalle.length; j++) {
       if (String(dataDetalle[j][1]).trim().toUpperCase() === idPedidoStr) {
         const idProducto = String(dataDetalle[j][3]).trim().toUpperCase();
         const producto = productosMap[idProducto] || { nombre: 'Producto', precio: 0 };
-        
+
         items.push({
           idDetalle: String(dataDetalle[j][0]),
           idProducto: String(dataDetalle[j][3]),
@@ -1725,10 +1728,25 @@ function obtenerItemsPedidoMesero(idPedido) {
         });
       }
     }
-    
-    return { success: true, items: items };
+
+    // V18.1: Obtener Estado_Logistico de la tabla Pedidos
+    var estadoLogistico = 'Solicitado';
+    if (sheetPedidos) {
+      var dataPedidos = sheetPedidos.getDataRange().getValues();
+      var tieneNuevaEstructura = dataPedidos.length > 1 && dataPedidos[0].length >= 16;
+      var colEstado = tieneNuevaEstructura ? 4 : 3;
+
+      for (var k = 1; k < dataPedidos.length; k++) {
+        if (String(dataPedidos[k][0]).trim().toUpperCase() === idPedidoStr) {
+          estadoLogistico = String(dataPedidos[k][colEstado] || 'Solicitado').trim();
+          break;
+        }
+      }
+    }
+
+    return { success: true, items: items, estado: estadoLogistico };
   } catch (error) {
-    return { success: false, items: [] };
+    return { success: false, items: [], estado: 'Solicitado' };
   }
 }
 
