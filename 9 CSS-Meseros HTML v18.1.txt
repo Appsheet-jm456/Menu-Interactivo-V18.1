@@ -1,7 +1,7 @@
 <style>
 /* ============================================
-   CSS PANEL MESEROS V16 - CLOUDPYME POS FASE 7
-   Completo y Corregido
+   CSS PANEL MESEROS V18.1 - CLOUDPYME POS
+   Incluye: Badge Estado Cocina
 ============================================ */
 
 /* VARIABLES */
@@ -1018,6 +1018,67 @@ body {
 }
 
 /* ============================================
+   V18.1 - BADGE ESTADO COCINA
+   Se muestra en el modal de mesa ocupada
+============================================ */
+.badge-estado-cocina {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  margin: 12px 0;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  transition: var(--transition-fast);
+}
+
+/* Estado: En espera (Solicitado) - Amarillo */
+.badge-estado-cocina.badge-solicitado {
+  background-color: #FEF3C7;
+  color: #92400E;
+  border: 2px solid #F59E0B;
+}
+
+/* Estado: Recibido - Gris Azulado */
+.badge-estado-cocina.badge-recibido {
+  background-color: #E0E7FF;
+  color: #4338CA;
+  border: 2px solid #6366F1;
+}
+
+/* Estado: En Preparacion - Azul */
+.badge-estado-cocina.badge-preparacion {
+  background-color: #DBEAFE;
+  color: #1E40AF;
+  border: 2px solid #3B82F6;
+}
+
+/* Estado: Listo para entregar (Enviado/Entregado) - Verde */
+.badge-estado-cocina.badge-entregado {
+  background-color: #DCFCE7;
+  color: #166534;
+  border: 2px solid #22C55E;
+}
+
+/* Animacion sutil al aparecer */
+#badgeEstadoPedido {
+  animation: badgeFadeIn 0.3s ease;
+}
+
+@keyframes badgeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================
    POS CONTAINER
 ============================================ */
 .pos-container {
@@ -1559,6 +1620,12 @@ body {
   .metodos-grid { grid-template-columns: 1fr; }
   .modal-fullscreen { border-radius: 0; }
   .pos-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
+
+  /* Badge responsive */
+  .badge-estado-cocina {
+    font-size: 13px;
+    padding: 8px 12px;
+  }
 }
 
 @media (max-width: 480px) {
