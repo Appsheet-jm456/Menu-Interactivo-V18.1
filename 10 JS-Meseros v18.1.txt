@@ -1,7 +1,11 @@
 <script>
 // ============================================
-// PANEL MESEROS V18.1 - JAVASCRIPT COMPLETO
-// CORRECCIONES: Badge Estado Cocina (sin auto-refresh)
+// PANEL MESEROS V18.1 SYNC - JAVASCRIPT COMPLETO
+// MEJORAS:
+// - Badge Estado Cocina sincronizado con GIP
+// - Polling ligero cada 15s (solo con modal abierto)
+// - Notificacion sonora cuando pedido esta LISTO
+// - Vibracion en dispositivos moviles
 // ============================================
 
 var usuarioMesero = null;
@@ -19,6 +23,13 @@ var totalActualCobro = 0;
 var ultimoPedidoExitoso = null;
 // NUEVO V13: Variable para guardar el total antes de limpiar carrito
 var totalCarritoEnviado = 0;
+
+// ============================================
+// V18.1 SYNC: Variables para sincronizacion badge cocina
+// ============================================
+var intervalSyncBadge = null;        // Intervalo de polling
+var estadoAnteriorCocina = null;     // Estado anterior para detectar cambios
+var SYNC_INTERVAL_MS = 15000;        // Polling cada 15 segundos
 
 // ============================================
 // INICIALIZACION
@@ -309,7 +320,7 @@ function confirmarAbrirMesa() {
 }
 
 // ============================================
-// MODAL GESTIONAR MESA OCUPADA - V18.1 SIN AUTO-REFRESH
+// MODAL GESTIONAR MESA OCUPADA - V18.1 CON SYNC COCINA
 // ============================================
 function abrirModalGestionarMesa() {
   document.getElementById('gestionMesaNombre').textContent = mesaSeleccionada.nombre;
@@ -321,8 +332,155 @@ function abrirModalGestionarMesa() {
     badgeExistente.remove();
   }
 
+  // V18.1 SYNC: Resetear estado anterior y cargar items
+  estadoAnteriorCocina = null;
   cargarItemsMesa();
   abrirModal('modalGestionarMesa');
+
+  // V18.1 SYNC: Iniciar polling para sincronizar badge con cocina
+  iniciarSyncBadgeCocina();
+}
+
+// ============================================
+// V18.1 SYNC: Funciones de sincronizacion badge cocina
+// ============================================
+
+// Iniciar polling para sincronizar estado de cocina
+function iniciarSyncBadgeCocina() {
+  // Detener cualquier polling anterior
+  detenerSyncBadgeCocina();
+
+  // Solo iniciar si hay mesa seleccionada con pedido activo
+  if (!mesaSeleccionada || !mesaSeleccionada.idPedidoActivo) {
+    console.log('SyncBadge: Sin pedido activo, no se inicia polling');
+    return;
+  }
+
+  console.log('SyncBadge: Iniciando polling cada ' + (SYNC_INTERVAL_MS/1000) + 's para pedido:', mesaSeleccionada.idPedidoActivo);
+
+  // Iniciar intervalo de polling
+  intervalSyncBadge = setInterval(function() {
+    verificarEstadoCocina();
+  }, SYNC_INTERVAL_MS);
+}
+
+// Detener polling de sincronizacion
+function detenerSyncBadgeCocina() {
+  if (intervalSyncBadge) {
+    clearInterval(intervalSyncBadge);
+    intervalSyncBadge = null;
+    console.log('SyncBadge: Polling detenido');
+  }
+}
+
+// Verificar estado actual de cocina y actualizar badge
+function verificarEstadoCocina() {
+  // Validar que el modal siga abierto
+  var modal = document.getElementById('modalGestionarMesa');
+  if (!modal || !modal.classList.contains('show')) {
+    detenerSyncBadgeCocina();
+    return;
+  }
+
+  // Validar pedido activo
+  if (!mesaSeleccionada || !mesaSeleccionada.idPedidoActivo) {
+    detenerSyncBadgeCocina();
+    return;
+  }
+
+  // Consultar estado actual al backend
+  google.script.run
+    .withSuccessHandler(function(r) {
+      if (r && r.success) {
+        var estadoNuevo = (r.estado || 'Solicitado').toLowerCase();
+        var estadoAnterior = (estadoAnteriorCocina || '').toLowerCase();
+
+        console.log('SyncBadge: Estado recibido:', estadoNuevo, '| Anterior:', estadoAnterior);
+
+        // Detectar si cambio a LISTO (enviado/entregado)
+        var esListoNuevo = (estadoNuevo === 'enviado' || estadoNuevo === 'entregado' || estadoNuevo === 'listo' || estadoNuevo === 'terminado');
+        var eraListoAntes = (estadoAnterior === 'enviado' || estadoAnterior === 'entregado' || estadoAnterior === 'listo' || estadoAnterior === 'terminado');
+
+        // Si cambio a LISTO y antes no lo estaba, reproducir sonido
+        if (esListoNuevo && !eraListoAntes && estadoAnteriorCocina !== null) {
+          console.log('SyncBadge: Pedido LISTO! Reproduciendo notificacion...');
+          reproducirSonidoNotificacion();
+          mostrarToast('success', 'Pedido Listo!', 'El pedido de ' + mesaSeleccionada.nombre + ' esta listo para entregar');
+        }
+
+        // Actualizar badge visual
+        actualizarBadgeEstado(r.estado || 'Solicitado');
+
+        // Guardar estado para proxima comparacion
+        estadoAnteriorCocina = r.estado || 'Solicitado';
+      }
+    })
+    .withFailureHandler(function(e) {
+      console.error('SyncBadge: Error consultando estado:', e);
+    })
+    .obtenerItemsPedidoMesero(mesaSeleccionada.idPedidoActivo);
+}
+
+// Actualizar badge sin recargar toda la lista de items
+function actualizarBadgeEstado(estado) {
+  var totalesContainer = document.querySelector('.pedido-totales');
+  if (!totalesContainer) return;
+
+  var badgeViejo = document.getElementById('badgeEstadoPedido');
+  if (badgeViejo) {
+    badgeViejo.remove();
+  }
+
+  var badgeHTML = generarBadgeEstadoPedido(estado);
+  totalesContainer.insertAdjacentHTML('beforebegin', badgeHTML);
+}
+
+// Reproducir sonido de notificacion (pedido listo)
+function reproducirSonidoNotificacion() {
+  try {
+    // Crear contexto de audio
+    var AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) {
+      console.log('SyncBadge: Web Audio API no soportada');
+      return;
+    }
+
+    var audioCtx = new AudioContext();
+
+    // Crear secuencia de tonos (ding-dong alegre)
+    var tiempos = [0, 0.15, 0.3];
+    var frecuencias = [880, 1100, 1320]; // La5, Do#6, Mi6
+
+    for (var i = 0; i < tiempos.length; i++) {
+      (function(tiempo, freq) {
+        var oscillator = audioCtx.createOscillator();
+        var gainNode = audioCtx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.type = 'sine';
+        oscillator.frequency.value = freq;
+
+        var inicioTono = audioCtx.currentTime + tiempo;
+        gainNode.gain.setValueAtTime(0.3, inicioTono);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, inicioTono + 0.3);
+
+        oscillator.start(inicioTono);
+        oscillator.stop(inicioTono + 0.35);
+      })(tiempos[i], frecuencias[i]);
+    }
+
+    // Vibrar dispositivo si es movil
+    if (navigator.vibrate) {
+      navigator.vibrate([100, 50, 100, 50, 150]);
+    }
+
+    console.log('SyncBadge: Sonido reproducido');
+
+  } catch (e) {
+    console.error('SyncBadge: Error reproduciendo sonido:', e);
+  }
 }
 
 // ============================================
@@ -370,6 +528,12 @@ function cargarItemsMesa() {
 
         // Insertar nuevo badge antes del contenedor de totales
         totalesContainer.insertAdjacentHTML('beforebegin', badgeHTML);
+      }
+
+      // V18.1 SYNC: Guardar estado inicial para detectar cambios futuros
+      if (estadoAnteriorCocina === null) {
+        estadoAnteriorCocina = estadoPedido;
+        console.log('SyncBadge: Estado inicial establecido:', estadoPedido);
       }
 
       for(var j = 0; j < mesas.length; j++) {
@@ -1473,7 +1637,18 @@ function enviarWhatsApp() {
 // ============================================
 function formatearPrecio(p){return parseFloat(p||0).toLocaleString('es-CO',{minimumFractionDigits:0,maximumFractionDigits:0});}
 function abrirModal(id){var m=document.getElementById(id);if(m)m.classList.add('show');}
-function cerrarModal(id){var m=document.getElementById(id);if(m)m.classList.remove('show');}
+
+// V18.1 SYNC: cerrarModal modificado para detener polling
+function cerrarModal(id){
+  var m=document.getElementById(id);
+  if(m)m.classList.remove('show');
+
+  // Si cerramos el modal de gestion de mesa, detener sincronizacion
+  if(id === 'modalGestionarMesa') {
+    detenerSyncBadgeCocina();
+    estadoAnteriorCocina = null;
+  }
+}
 
 function mostrarLoading(show,txt) {
   var o=document.getElementById('loadingOverlay');
@@ -1552,5 +1727,5 @@ function generarBadgeEstadoPedido(estado) {
   return badgeHTML;
 }
 
-console.log('JS-Meseros V18.1 cargado correctamente');
+console.log('JS-Meseros V18.1 SYNC cargado - Badge cocina con sincronizacion en tiempo real');
 </script>
