@@ -2240,3 +2240,4 @@ function obtenerDatosCliente(idCliente) {
 }
 
 Logger.log('V16 Funciones con unificación de identidad cargadas');
+
