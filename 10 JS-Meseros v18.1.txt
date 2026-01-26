@@ -30,6 +30,23 @@ var totalCarritoEnviado = 0;
 var intervalSyncBadge = null;        // Intervalo de polling
 var estadoAnteriorCocina = null;     // Estado anterior para detectar cambios
 var SYNC_INTERVAL_MS = 15000;        // Polling cada 15 segundos
+var audioContextGlobal = null;       // AudioContext reutilizable
+
+// Helper: Extraer estado logistico de la respuesta del backend
+// Busca en multiples campos posibles: estado, estadoLogistico, Estado_Logistico
+function extraerEstadoLogistico(respuesta) {
+  if (!respuesta) return 'Solicitado';
+
+  // Buscar en orden de prioridad
+  var estado = respuesta.estadoLogistico
+            || respuesta.Estado_Logistico
+            || respuesta.estado
+            || respuesta.estadoPedido
+            || 'Solicitado';
+
+  console.log('SyncBadge: Campo estado extraido:', estado, '| Respuesta completa:', JSON.stringify(respuesta).substring(0, 200));
+  return estado;
+}
 
 // ============================================
 // INICIALIZACION
@@ -388,14 +405,18 @@ function verificarEstadoCocina() {
     return;
   }
 
+  console.log('SyncBadge: Consultando estado para pedido:', mesaSeleccionada.idPedidoActivo);
+
   // Consultar estado actual al backend
   google.script.run
     .withSuccessHandler(function(r) {
       if (r && r.success) {
-        var estadoNuevo = (r.estado || 'Solicitado').toLowerCase();
+        // Usar helper para extraer estado de multiples campos posibles
+        var estadoNuevoRaw = extraerEstadoLogistico(r);
+        var estadoNuevo = estadoNuevoRaw.toLowerCase();
         var estadoAnterior = (estadoAnteriorCocina || '').toLowerCase();
 
-        console.log('SyncBadge: Estado recibido:', estadoNuevo, '| Anterior:', estadoAnterior);
+        console.log('SyncBadge: Estado nuevo:', estadoNuevoRaw, '| Anterior:', estadoAnteriorCocina);
 
         // Detectar si cambio a LISTO (enviado/entregado)
         var esListoNuevo = (estadoNuevo === 'enviado' || estadoNuevo === 'entregado' || estadoNuevo === 'listo' || estadoNuevo === 'terminado');
@@ -403,16 +424,21 @@ function verificarEstadoCocina() {
 
         // Si cambio a LISTO y antes no lo estaba, reproducir sonido
         if (esListoNuevo && !eraListoAntes && estadoAnteriorCocina !== null) {
-          console.log('SyncBadge: Pedido LISTO! Reproduciendo notificacion...');
+          console.log('SyncBadge: CAMBIO DETECTADO a LISTO! Reproduciendo notificacion...');
           reproducirSonidoNotificacion();
           mostrarToast('success', 'Pedido Listo!', 'El pedido de ' + mesaSeleccionada.nombre + ' esta listo para entregar');
         }
 
-        // Actualizar badge visual
-        actualizarBadgeEstado(r.estado || 'Solicitado');
+        // Detectar cualquier cambio de estado para actualizar badge
+        if (estadoNuevo !== estadoAnterior) {
+          console.log('SyncBadge: Cambio de estado detectado, actualizando badge');
+          actualizarBadgeEstado(estadoNuevoRaw);
+        }
 
         // Guardar estado para proxima comparacion
-        estadoAnteriorCocina = r.estado || 'Solicitado';
+        estadoAnteriorCocina = estadoNuevoRaw;
+      } else {
+        console.log('SyncBadge: Respuesta sin success o vacia:', r);
       }
     })
     .withFailureHandler(function(e) {
@@ -437,16 +463,47 @@ function actualizarBadgeEstado(estado) {
 
 // Reproducir sonido de notificacion (pedido listo)
 function reproducirSonidoNotificacion() {
+  console.log('SyncBadge: Intentando reproducir sonido...');
+
+  // Vibrar dispositivo primero (no requiere interaccion)
+  if (navigator.vibrate) {
+    navigator.vibrate([200, 100, 200, 100, 300]);
+    console.log('SyncBadge: Vibracion activada');
+  }
+
   try {
-    // Crear contexto de audio
+    // Crear o reutilizar contexto de audio
     var AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) {
       console.log('SyncBadge: Web Audio API no soportada');
       return;
     }
 
-    var audioCtx = new AudioContext();
+    // Reutilizar contexto global si existe
+    if (!audioContextGlobal) {
+      audioContextGlobal = new AudioContext();
+    }
 
+    var audioCtx = audioContextGlobal;
+
+    // Resumir contexto si esta suspendido (restriccion de navegadores)
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().then(function() {
+        console.log('SyncBadge: AudioContext resumido');
+        ejecutarSonidoNotificacion(audioCtx);
+      });
+    } else {
+      ejecutarSonidoNotificacion(audioCtx);
+    }
+
+  } catch (e) {
+    console.error('SyncBadge: Error reproduciendo sonido:', e);
+  }
+}
+
+// Ejecutar la secuencia de sonido
+function ejecutarSonidoNotificacion(audioCtx) {
+  try {
     // Crear secuencia de tonos (ding-dong alegre)
     var tiempos = [0, 0.15, 0.3];
     var frecuencias = [880, 1100, 1320]; // La5, Do#6, Mi6
@@ -463,23 +520,18 @@ function reproducirSonidoNotificacion() {
         oscillator.frequency.value = freq;
 
         var inicioTono = audioCtx.currentTime + tiempo;
-        gainNode.gain.setValueAtTime(0.3, inicioTono);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, inicioTono + 0.3);
+        gainNode.gain.setValueAtTime(0.4, inicioTono);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, inicioTono + 0.35);
 
         oscillator.start(inicioTono);
-        oscillator.stop(inicioTono + 0.35);
+        oscillator.stop(inicioTono + 0.4);
       })(tiempos[i], frecuencias[i]);
     }
 
-    // Vibrar dispositivo si es movil
-    if (navigator.vibrate) {
-      navigator.vibrate([100, 50, 100, 50, 150]);
-    }
-
-    console.log('SyncBadge: Sonido reproducido');
+    console.log('SyncBadge: Sonido reproducido exitosamente');
 
   } catch (e) {
-    console.error('SyncBadge: Error reproduciendo sonido:', e);
+    console.error('SyncBadge: Error en ejecutarSonidoNotificacion:', e);
   }
 }
 
@@ -506,8 +558,8 @@ function cargarItemsMesa() {
     if(r && r.success && r.items && r.items.length > 0) {
       var html = '', total = 0;
 
-      // V18.1: Determinar estado del pedido para el badge
-      var estadoPedido = r.estado || 'Solicitado';
+      // V18.1: Determinar estado del pedido para el badge (usar helper)
+      var estadoPedido = extraerEstadoLogistico(r);
       var badgeHTML = generarBadgeEstadoPedido(estadoPedido);
 
       for(var i = 0; i < r.items.length; i++) {
