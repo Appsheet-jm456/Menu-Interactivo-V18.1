@@ -1691,12 +1691,39 @@ function obtenerItemsPedidoMesero(idPedido) {
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
     const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
-    
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+
     if (!sheetDetalle || !sheetProductos) return { success: false, items: [] };
-    
+
     const dataDetalle = sheetDetalle.getDataRange().getValues();
     const dataProductos = sheetProductos.getDataRange().getValues();
-    
+
+    // V18.1 SYNC: Obtener Estado_Logistico de la tabla Pedidos
+    var estadoLogistico = 'Solicitado';
+    if (sheetPedidos) {
+      const dataPedidos = sheetPedidos.getDataRange().getValues();
+      const idPedidoUpper = String(idPedido).trim().toUpperCase();
+
+      // Detectar estructura de columnas (nueva vs antigua)
+      const headers = dataPedidos[0] || [];
+      var colEstado = 4; // Default nueva estructura
+      for (var h = 0; h < headers.length; h++) {
+        if (String(headers[h]).toLowerCase().indexOf('estado_logistico') !== -1 ||
+            String(headers[h]).toLowerCase() === 'estadologistico') {
+          colEstado = h;
+          break;
+        }
+      }
+
+      // Buscar el pedido y obtener su estado
+      for (var p = 1; p < dataPedidos.length; p++) {
+        if (String(dataPedidos[p][0]).trim().toUpperCase() === idPedidoUpper) {
+          estadoLogistico = String(dataPedidos[p][colEstado] || 'Solicitado').trim();
+          break;
+        }
+      }
+    }
+
     var productosMap = {};
     for (var i = 1; i < dataProductos.length; i++) {
       productosMap[String(dataProductos[i][0]).trim().toUpperCase()] = {
@@ -1704,15 +1731,15 @@ function obtenerItemsPedidoMesero(idPedido) {
         precio: dataProductos[i][4]
       };
     }
-    
+
     const idPedidoStr = String(idPedido).trim().toUpperCase();
     const items = [];
-    
+
     for (var j = 1; j < dataDetalle.length; j++) {
       if (String(dataDetalle[j][1]).trim().toUpperCase() === idPedidoStr) {
         const idProducto = String(dataDetalle[j][3]).trim().toUpperCase();
         const producto = productosMap[idProducto] || { nombre: 'Producto', precio: 0 };
-        
+
         items.push({
           idDetalle: String(dataDetalle[j][0]),
           idProducto: String(dataDetalle[j][3]),
@@ -1725,10 +1752,11 @@ function obtenerItemsPedidoMesero(idPedido) {
         });
       }
     }
-    
-    return { success: true, items: items };
+
+    // V18.1 SYNC: Incluir estadoLogistico en la respuesta
+    return { success: true, items: items, estadoLogistico: estadoLogistico };
   } catch (error) {
-    return { success: false, items: [] };
+    return { success: false, items: [], estadoLogistico: 'Solicitado' };
   }
 }
 
