@@ -1739,69 +1739,8 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-/**
- * Modificar función cambiarVista para soportar vista de usuarios
- */
-var cambiarVistaOriginal = cambiarVista;
-cambiarVista = function(vista, elemento) {
-  vistaActual = vista;
-
-  document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
-  if (elemento) elemento.classList.add('active');
-
-  // Ocultar todas las secciones
-  var statsGrid = document.querySelector('.stats-grid');
-  var filtersBar = document.querySelector('.filters-bar');
-  var tableContainer = document.querySelector('.table-container');
-  var seccionUsuarios = document.getElementById('seccionUsuarios');
-
-  if (vista === 'usuarios') {
-    // Mostrar sección de usuarios
-    if (statsGrid) statsGrid.style.display = 'none';
-    if (filtersBar) filtersBar.style.display = 'none';
-    if (tableContainer) tableContainer.style.display = 'none';
-    if (seccionUsuarios) seccionUsuarios.style.display = 'block';
-
-    document.getElementById('vistaTitle').textContent = '👥 Gestión de Usuarios';
-    document.getElementById('vistaSubtitle').textContent = 'Administrar usuarios del sistema';
-
-    // Cargar usuarios si no están cargados
-    if (usuariosCache.length === 0) {
-      cargarListaUsuarios();
-    }
-  } else {
-    // Mostrar vista de pedidos
-    if (statsGrid) statsGrid.style.display = 'grid';
-    if (filtersBar) filtersBar.style.display = 'flex';
-    if (tableContainer) tableContainer.style.display = 'block';
-    if (seccionUsuarios) seccionUsuarios.style.display = 'none';
-
-    var titulos = {
-      'admin': { titulo: '📊 Dashboard Pedidos', subtitulo: 'Vista completa de todos los pedidos' },
-      'cocina': { titulo: '👨‍🍳 Pedidos Comanda', subtitulo: 'Pedidos pendientes y en preparación' },
-      'domicilio': { titulo: '🛵 Pedidos Domicilio', subtitulo: 'Pedidos listos para entregar' }
-    };
-
-    if (titulos[vista]) {
-      document.getElementById('vistaTitle').textContent = titulos[vista].titulo;
-      document.getElementById('vistaSubtitle').textContent = titulos[vista].subtitulo;
-    }
-
-    filtrosActuales.vistaRol = vista === 'admin' ? null : vista;
-    cargarDatosDashboard();
-  }
-};
-
-// Agregar inicialización de módulo de usuarios al cargar el dashboard
-var iniciarDashboardOriginal = iniciarDashboard;
-iniciarDashboard = function() {
-  iniciarDashboardOriginal();
-
-  // Inicializar módulo de usuarios después de cargar el dashboard
-  setTimeout(function() {
-    inicializarModuloUsuarios();
-  }, 100);
-};
+// NOTA: Las funciones cambiarVista e iniciarDashboard se extienden en la FASE 9.3
+// para manejar tanto usuarios como clientes de forma unificada.
 
 console.log('✅ FASE 9.2 - Módulo Gestión de Usuarios cargado correctamente');
 
@@ -2187,8 +2126,14 @@ function reactivarCliente(idCliente) {
     .adminReactivarEntidad('cliente', idCliente, usuarioDashboard);
 }
 
-// Actualizar cambiarVista para soportar vista de clientes
-var cambiarVistaConUsuarios = cambiarVista;
+// ================================================================================
+// EXTENSIÓN DE FUNCIONES CORE PARA MÓDULOS DE GESTIÓN (USUARIOS Y CLIENTES)
+// ================================================================================
+
+// Guardar referencia a la función cambiarVista original
+var cambiarVistaOriginal = cambiarVista;
+
+// Extender cambiarVista para soportar vistas de usuarios y clientes
 cambiarVista = function(vista, elemento) {
   vistaActual = vista;
 
@@ -2249,12 +2194,19 @@ cambiarVista = function(vista, elemento) {
   }
 };
 
-// Actualizar iniciarDashboard para incluir módulo de clientes
-var iniciarDashboardConUsuarios = iniciarDashboard;
-iniciarDashboard = function() {
-  iniciarDashboardConUsuarios();
+// Guardar referencia a la función iniciarDashboard original
+var iniciarDashboardOriginal = iniciarDashboard;
 
-  // Inicializar módulo de clientes después de cargar el dashboard
+// Extender iniciarDashboard para inicializar módulos de usuarios y clientes
+iniciarDashboard = function() {
+  iniciarDashboardOriginal();
+
+  // Inicializar módulo de usuarios
+  setTimeout(function() {
+    inicializarModuloUsuarios();
+  }, 100);
+
+  // Inicializar módulo de clientes
   setTimeout(function() {
     inicializarModuloClientes();
   }, 150);
