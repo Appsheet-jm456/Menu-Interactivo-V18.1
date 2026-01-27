@@ -118,8 +118,15 @@
             <span class="nav-text">Pedidos Domicilio</span>
             <span class="nav-badge badge-info" id="badgeDomicilio">0</span>
           </button>
+
+          <!-- FASE 9.2: Pestaña Usuarios (solo visible para Administradores) -->
+          <button class="nav-item" data-vista="usuarios" id="btnNavUsuarios" onclick="cambiarVista('usuarios', this)" style="display: none;">
+            <span class="nav-icon">👥</span>
+            <span class="nav-text">Gestión Usuarios</span>
+            <span class="nav-badge badge-success" id="badgeUsuarios">0</span>
+          </button>
         </div>
-        
+
         <div class="nav-section">
           <span class="nav-section-title">Acciones</span>
           
@@ -336,7 +343,84 @@
           <p>No se encontraron pedidos con los filtros seleccionados</p>
         </div>
       </section>
-      
+
+      <!-- ================================================
+           FASE 9.2: SECCIÓN GESTIÓN DE USUARIOS
+      ================================================= -->
+      <section id="seccionUsuarios" class="section-usuarios" style="display: none;">
+
+        <!-- Header de la sección -->
+        <div class="section-header-usuarios">
+          <div class="section-title-usuarios">
+            <h2>👥 Gestión de Usuarios</h2>
+            <p>Administra usuarios internos del sistema</p>
+          </div>
+          <button class="btn-nuevo-usuario" onclick="abrirModalUsuario(null)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Nuevo Usuario</span>
+          </button>
+        </div>
+
+        <!-- Barra de búsqueda usuarios -->
+        <div class="usuarios-search-bar">
+          <div class="search-input-wrapper">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="busquedaUsuarios" placeholder="Buscar por nombre, email o teléfono..." oninput="filtrarUsuariosLocal()">
+          </div>
+          <button class="btn-refresh-usuarios" onclick="cargarListaUsuarios()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6"/>
+              <path d="M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Tabla Desktop -->
+        <div class="tabla-usuarios-desktop">
+          <table class="data-table table-usuarios">
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Rol</th>
+                <th>Contacto</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyUsuarios">
+              <tr class="loading-row">
+                <td colspan="5">
+                  <div class="table-loading">
+                    <div class="spinner"></div>
+                    <span>Cargando usuarios...</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Cards Mobile -->
+        <div class="lista-usuarios-mobile" id="listaUsuariosMobile">
+          <!-- Se llena dinámicamente -->
+        </div>
+
+        <!-- Estado vacío usuarios -->
+        <div id="emptyStateUsuarios" class="empty-state" style="display: none;">
+          <div class="empty-icon">👤</div>
+          <h3>No hay usuarios</h3>
+          <p>No se encontraron usuarios con los criterios de búsqueda</p>
+        </div>
+
+      </section>
+
     </main>
   </div>
   
@@ -457,6 +541,141 @@
     </div>
   </div>
   
+  <!-- ================================================
+       FASE 9.2: MODAL CREAR/EDITAR USUARIO
+  ================================================= -->
+  <div id="modalUsuario" class="modal">
+    <div class="modal-content modal-usuario">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h2 id="modalUsuarioTitulo">➕ Nuevo Usuario</h2>
+        </div>
+        <button class="btn-close" onclick="cerrarModalUsuario()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <form id="formUsuario" onsubmit="return false;">
+
+          <!-- Nombre -->
+          <div class="form-group-usuario">
+            <label for="inputNombreUsuario">👤 Nombre completo <span class="required">*</span></label>
+            <input type="text" id="inputNombreUsuario" placeholder="Ej: Juan Pérez" maxlength="100" required>
+          </div>
+
+          <!-- Rol -->
+          <div class="form-group-usuario">
+            <label for="selectRolUsuario">🎭 Rol <span class="required">*</span></label>
+            <select id="selectRolUsuario" required onchange="actualizarCamposSegunRol()">
+              <option value="">-- Seleccionar rol --</option>
+              <option value="Administrador">👑 Administrador</option>
+              <option value="Mesero">🧑‍🍳 Mesero</option>
+              <option value="Cocina">🍳 Cocina</option>
+              <option value="Domiciliario">🛵 Domiciliario</option>
+            </select>
+            <span class="hint-text" id="hintRol">El rol determina los permisos y método de acceso</span>
+          </div>
+
+          <!-- Email (dinámico) -->
+          <div class="form-group-usuario" id="campoEmailUsuario">
+            <label for="inputEmailUsuario">📧 Correo electrónico <span class="required">*</span></label>
+            <input type="email" id="inputEmailUsuario" placeholder="correo@empresa.com" maxlength="100">
+            <span class="hint-text">Se usará para iniciar sesión en el Dashboard</span>
+          </div>
+
+          <!-- Credencial (dinámico: PIN o Password) -->
+          <div class="form-group-usuario" id="campoCredencialUsuario">
+            <label for="inputCredencialUsuario" id="labelCredencialUsuario">🔐 Contraseña <span class="required" id="reqCredencial">*</span></label>
+            <div class="input-credencial-wrapper">
+              <input type="password" id="inputCredencialUsuario" placeholder="••••••••" maxlength="50">
+              <button type="button" class="btn-toggle-password" onclick="togglePasswordVisibility()">
+                <svg id="iconShowPass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <svg id="iconHidePass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              </button>
+            </div>
+            <span class="hint-text" id="hintCredencial">Mínimo 4 caracteres</span>
+          </div>
+
+          <!-- Teléfono -->
+          <div class="form-group-usuario">
+            <label for="inputTelefonoUsuario">📱 Teléfono</label>
+            <input type="tel" id="inputTelefonoUsuario" placeholder="3001234567" maxlength="15" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <span class="hint-text">Solo números, mínimo 7 dígitos</span>
+          </div>
+
+          <!-- Estado Activo -->
+          <div class="form-group-usuario checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="checkActivoUsuario" checked>
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-text">✅ Usuario activo</span>
+            </label>
+            <span class="hint-text">Los usuarios inactivos no pueden iniciar sesión</span>
+          </div>
+
+          <!-- Mensaje de error -->
+          <div id="errorFormUsuario" class="error-form-usuario" style="display: none;"></div>
+
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cerrarModalUsuario()">Cancelar</button>
+        <button type="button" class="btn-primary-usuario" onclick="guardarUsuario()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span id="btnGuardarUsuarioText">Guardar Usuario</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================
+       MODAL CONFIRMAR ELIMINACIÓN USUARIO
+  ================================================= -->
+  <div id="modalConfirmarEliminar" class="modal">
+    <div class="modal-content modal-sm">
+      <div class="modal-header modal-header-danger">
+        <div class="modal-title">
+          <h2>⚠️ Confirmar Desactivación</h2>
+        </div>
+        <button class="btn-close" onclick="cerrarModalConfirmarEliminar()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message">¿Está seguro que desea desactivar al usuario <strong id="nombreUsuarioEliminar">-</strong>?</p>
+        <p class="confirm-note">El usuario no será eliminado permanentemente, solo se marcará como inactivo y no podrá iniciar sesión.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cerrarModalConfirmarEliminar()">Cancelar</button>
+        <button type="button" class="btn-danger" onclick="confirmarEliminarUsuario()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Desactivar Usuario
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ================================================
        OVERLAY DE CARGA
   ================================================= -->

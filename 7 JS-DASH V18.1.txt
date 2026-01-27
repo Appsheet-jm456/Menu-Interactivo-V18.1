@@ -1206,6 +1206,605 @@ function abrirGPS() {
   mostrarToast('info', '📍 Navegando', 'Abriendo Google Maps con la dirección');
 }
 
+// ============================================
+// FASE 9.2: GESTIÓN DE USUARIOS - CRUD ADMIN
+// ============================================
+
+// Variables globales para gestión de usuarios
+var usuariosCache = [];
+var usuarioEditando = null;
+var usuarioAEliminar = null;
+
+/**
+ * Inicializar módulo de usuarios cuando el usuario es Admin
+ */
+function inicializarModuloUsuarios() {
+  // Verificar si el usuario es Administrador
+  if (usuarioDashboard && usuarioDashboard.esSuperAdmin) {
+    var btnNavUsuarios = document.getElementById('btnNavUsuarios');
+    if (btnNavUsuarios) {
+      btnNavUsuarios.style.display = 'flex';
+    }
+    console.log('✅ Módulo de usuarios habilitado para Admin');
+  }
+}
+
+/**
+ * Cargar lista de usuarios desde el backend
+ */
+function cargarListaUsuarios() {
+  console.log('🔄 Cargando lista de usuarios...');
+
+  var tbodyUsuarios = document.getElementById('tbodyUsuarios');
+  var listaUsuariosMobile = document.getElementById('listaUsuariosMobile');
+  var emptyStateUsuarios = document.getElementById('emptyStateUsuarios');
+
+  // Mostrar loading
+  if (tbodyUsuarios) {
+    tbodyUsuarios.innerHTML = '<tr class="loading-row"><td colspan="5"><div class="table-loading"><div class="spinner"></div><span>Cargando usuarios...</span></div></td></tr>';
+  }
+  if (listaUsuariosMobile) {
+    listaUsuariosMobile.innerHTML = '<div class="table-loading"><div class="spinner"></div><span>Cargando usuarios...</span></div>';
+  }
+  if (emptyStateUsuarios) {
+    emptyStateUsuarios.style.display = 'none';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('📥 Respuesta usuarios:', response);
+
+      if (response.success) {
+        usuariosCache = response.data || [];
+        renderizarTablaUsuarios();
+        actualizarBadgeUsuarios();
+        mostrarToast('success', 'Usuarios cargados', 'Se encontraron ' + usuariosCache.length + ' usuarios');
+      } else {
+        mostrarToast('error', 'Error', response.error || 'No se pudieron cargar los usuarios');
+        if (tbodyUsuarios) {
+          tbodyUsuarios.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Error al cargar usuarios</td></tr>';
+        }
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('❌ Error al cargar usuarios:', error);
+      mostrarToast('error', 'Error de conexión', 'No se pudo conectar con el servidor');
+      if (tbodyUsuarios) {
+        tbodyUsuarios.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Error de conexión</td></tr>';
+      }
+    })
+    .adminGestionarUsuarios('leer', {}, usuarioDashboard);
+}
+
+/**
+ * Renderizar tabla de usuarios (Desktop y Mobile)
+ */
+function renderizarTablaUsuarios() {
+  var tbodyUsuarios = document.getElementById('tbodyUsuarios');
+  var listaUsuariosMobile = document.getElementById('listaUsuariosMobile');
+  var emptyStateUsuarios = document.getElementById('emptyStateUsuarios');
+
+  // Aplicar filtro de búsqueda si existe
+  var busqueda = document.getElementById('busquedaUsuarios');
+  var termino = busqueda ? busqueda.value.toLowerCase().trim() : '';
+
+  var usuariosFiltrados = usuariosCache.filter(function(u) {
+    if (!termino) return true;
+    var nombre = (u.nombre || '').toLowerCase();
+    var email = (u.email || '').toLowerCase();
+    var telefono = (u.telefono || '').toLowerCase();
+    return nombre.indexOf(termino) !== -1 || email.indexOf(termino) !== -1 || telefono.indexOf(termino) !== -1;
+  });
+
+  if (usuariosFiltrados.length === 0) {
+    if (tbodyUsuarios) tbodyUsuarios.innerHTML = '';
+    if (listaUsuariosMobile) listaUsuariosMobile.innerHTML = '';
+    if (emptyStateUsuarios) emptyStateUsuarios.style.display = 'block';
+    return;
+  }
+
+  if (emptyStateUsuarios) emptyStateUsuarios.style.display = 'none';
+
+  // Renderizar tabla desktop
+  var htmlDesktop = '';
+  usuariosFiltrados.forEach(function(usuario) {
+    var avatarClass = obtenerClaseAvatar(usuario.rol);
+    var inicial = usuario.nombre ? usuario.nombre.charAt(0).toUpperCase() : 'U';
+    var badgeRol = obtenerBadgeRol(usuario.rol);
+    var badgeEstado = usuario.activo
+      ? '<span class="badge-estado badge-activo">✅ Activo</span>'
+      : '<span class="badge-estado badge-inactivo">❌ Inactivo</span>';
+
+    var acciones = '';
+    if (usuario.activo) {
+      acciones = '<button class="btn-accion-usuario btn-editar-usuario" onclick="abrirModalUsuario(\'' + usuario.id + '\')">✏️ Editar</button>';
+      // No permitir eliminar su propia cuenta
+      if (usuario.id !== usuarioDashboard.id) {
+        acciones += '<button class="btn-accion-usuario btn-eliminar-usuario" onclick="abrirModalEliminar(\'' + usuario.id + '\', \'' + escapeHtml(usuario.nombre) + '\')">🗑️</button>';
+      }
+    } else {
+      acciones = '<button class="btn-accion-usuario btn-reactivar-usuario" onclick="reactivarUsuario(\'' + usuario.id + '\')">🔄 Reactivar</button>';
+    }
+
+    htmlDesktop += '<tr>';
+    htmlDesktop += '<td><div class="usuario-info"><div class="usuario-avatar ' + avatarClass + '">' + inicial + '</div><div><div class="usuario-nombre">' + escapeHtml(usuario.nombre) + '</div><div class="usuario-id">' + usuario.id + '</div></div></div></td>';
+    htmlDesktop += '<td>' + badgeRol + '</td>';
+    htmlDesktop += '<td><div class="contacto-info"><span class="contacto-email">' + (usuario.email || '-') + '</span><span class="contacto-telefono">📱 ' + (usuario.telefono || '-') + '</span></div></td>';
+    htmlDesktop += '<td>' + badgeEstado + '</td>';
+    htmlDesktop += '<td><div class="acciones-usuario">' + acciones + '</div></td>';
+    htmlDesktop += '</tr>';
+  });
+
+  if (tbodyUsuarios) tbodyUsuarios.innerHTML = htmlDesktop;
+
+  // Renderizar cards mobile
+  var htmlMobile = '';
+  usuariosFiltrados.forEach(function(usuario) {
+    var avatarClass = obtenerClaseAvatar(usuario.rol);
+    var inicial = usuario.nombre ? usuario.nombre.charAt(0).toUpperCase() : 'U';
+    var badgeRol = obtenerBadgeRol(usuario.rol);
+    var badgeEstado = usuario.activo
+      ? '<span class="badge-estado badge-activo">✅ Activo</span>'
+      : '<span class="badge-estado badge-inactivo">❌ Inactivo</span>';
+
+    var acciones = '';
+    if (usuario.activo) {
+      acciones = '<button class="btn-accion-usuario btn-editar-usuario" onclick="abrirModalUsuario(\'' + usuario.id + '\')">✏️ Editar</button>';
+      if (usuario.id !== usuarioDashboard.id) {
+        acciones += '<button class="btn-accion-usuario btn-eliminar-usuario" onclick="abrirModalEliminar(\'' + usuario.id + '\', \'' + escapeHtml(usuario.nombre) + '\')">🗑️ Desactivar</button>';
+      }
+    } else {
+      acciones = '<button class="btn-accion-usuario btn-reactivar-usuario" onclick="reactivarUsuario(\'' + usuario.id + '\')">🔄 Reactivar</button>';
+    }
+
+    htmlMobile += '<div class="card-usuario-mobile">';
+    htmlMobile += '<div class="card-usuario-header"><div class="card-usuario-info"><div class="usuario-avatar ' + avatarClass + '">' + inicial + '</div><div><div class="card-usuario-nombre">' + escapeHtml(usuario.nombre) + '</div><div class="card-usuario-meta">' + badgeRol + ' ' + badgeEstado + '</div></div></div></div>';
+    htmlMobile += '<div class="card-usuario-contacto">';
+    if (usuario.email) htmlMobile += '<div class="card-usuario-contacto-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>' + usuario.email + '</div>';
+    if (usuario.telefono) htmlMobile += '<div class="card-usuario-contacto-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>' + usuario.telefono + '</div>';
+    htmlMobile += '</div>';
+    htmlMobile += '<div class="card-usuario-actions">' + acciones + '</div>';
+    htmlMobile += '</div>';
+  });
+
+  if (listaUsuariosMobile) listaUsuariosMobile.innerHTML = htmlMobile;
+}
+
+/**
+ * Filtrar usuarios localmente (sin llamar al backend)
+ */
+function filtrarUsuariosLocal() {
+  renderizarTablaUsuarios();
+}
+
+/**
+ * Obtener clase CSS del avatar según el rol
+ */
+function obtenerClaseAvatar(rol) {
+  var clases = {
+    'Administrador': 'avatar-admin',
+    'Admin': 'avatar-admin',
+    'Mesero': 'avatar-mesero',
+    'Cocina': 'avatar-cocina',
+    'Domiciliario': 'avatar-domiciliario'
+  };
+  return clases[rol] || 'avatar-admin';
+}
+
+/**
+ * Obtener badge HTML del rol
+ */
+function obtenerBadgeRol(rol) {
+  var badges = {
+    'Administrador': '<span class="badge-rol badge-rol-admin">👑 Administrador</span>',
+    'Admin': '<span class="badge-rol badge-rol-admin">👑 Admin</span>',
+    'Mesero': '<span class="badge-rol badge-rol-mesero">🧑‍🍳 Mesero</span>',
+    'Cocina': '<span class="badge-rol badge-rol-cocina">🍳 Cocina</span>',
+    'Domiciliario': '<span class="badge-rol badge-rol-domiciliario">🛵 Domiciliario</span>'
+  };
+  return badges[rol] || '<span class="badge-rol">' + rol + '</span>';
+}
+
+/**
+ * Actualizar badge de usuarios en el menú
+ */
+function actualizarBadgeUsuarios() {
+  var badge = document.getElementById('badgeUsuarios');
+  if (badge) {
+    var activos = usuariosCache.filter(function(u) { return u.activo; }).length;
+    badge.textContent = activos;
+  }
+}
+
+/**
+ * Abrir modal para crear o editar usuario
+ */
+function abrirModalUsuario(idUsuario) {
+  var modal = document.getElementById('modalUsuario');
+  var titulo = document.getElementById('modalUsuarioTitulo');
+  var btnTexto = document.getElementById('btnGuardarUsuarioText');
+  var errorDiv = document.getElementById('errorFormUsuario');
+
+  // Limpiar formulario
+  document.getElementById('formUsuario').reset();
+  document.getElementById('checkActivoUsuario').checked = true;
+  if (errorDiv) errorDiv.style.display = 'none';
+
+  // Resetear campos
+  actualizarCamposSegunRol();
+
+  if (idUsuario) {
+    // Modo edición
+    usuarioEditando = usuariosCache.find(function(u) { return u.id === idUsuario; });
+
+    if (!usuarioEditando) {
+      mostrarToast('error', 'Error', 'Usuario no encontrado');
+      return;
+    }
+
+    titulo.textContent = '✏️ Editar Usuario';
+    btnTexto.textContent = 'Actualizar Usuario';
+
+    // Llenar formulario
+    document.getElementById('inputNombreUsuario').value = usuarioEditando.nombre || '';
+    document.getElementById('selectRolUsuario').value = usuarioEditando.rol || '';
+    document.getElementById('inputEmailUsuario').value = usuarioEditando.email || '';
+    document.getElementById('inputTelefonoUsuario').value = usuarioEditando.telefono || '';
+    document.getElementById('checkActivoUsuario').checked = usuarioEditando.activo;
+    document.getElementById('inputCredencialUsuario').value = ''; // No mostrar credencial actual
+    document.getElementById('reqCredencial').style.display = 'none'; // No requerido en edición
+
+    // Actualizar campos según rol
+    actualizarCamposSegunRol();
+
+  } else {
+    // Modo creación
+    usuarioEditando = null;
+    titulo.textContent = '➕ Nuevo Usuario';
+    btnTexto.textContent = 'Guardar Usuario';
+    document.getElementById('reqCredencial').style.display = 'inline';
+  }
+
+  modal.classList.add('show');
+}
+
+/**
+ * Cerrar modal de usuario
+ */
+function cerrarModalUsuario() {
+  var modal = document.getElementById('modalUsuario');
+  modal.classList.remove('show');
+  usuarioEditando = null;
+}
+
+/**
+ * Actualizar campos del formulario según el rol seleccionado
+ */
+function actualizarCamposSegunRol() {
+  var rol = document.getElementById('selectRolUsuario').value;
+  var campoEmail = document.getElementById('campoEmailUsuario');
+  var labelCredencial = document.getElementById('labelCredencialUsuario');
+  var inputCredencial = document.getElementById('inputCredencialUsuario');
+  var hintCredencial = document.getElementById('hintCredencial');
+  var hintRol = document.getElementById('hintRol');
+
+  if (rol === 'Mesero') {
+    // Ocultar email para meseros
+    campoEmail.style.display = 'none';
+
+    // Cambiar a PIN
+    labelCredencial.innerHTML = '🔢 PIN de Acceso <span class="required" id="reqCredencial">*</span>';
+    inputCredencial.type = 'text';
+    inputCredencial.maxLength = 4;
+    inputCredencial.placeholder = '0000';
+    inputCredencial.pattern = '[0-9]{4}';
+    hintCredencial.textContent = 'PIN de 4 dígitos numéricos para acceso rápido';
+    hintRol.textContent = 'Los meseros acceden con PIN desde el Panel de Meseros';
+
+  } else {
+    // Mostrar email para otros roles
+    campoEmail.style.display = 'block';
+
+    // Cambiar a Password
+    labelCredencial.innerHTML = '🔐 Contraseña <span class="required" id="reqCredencial">*</span>';
+    inputCredencial.type = 'password';
+    inputCredencial.maxLength = 50;
+    inputCredencial.placeholder = '••••••••';
+    inputCredencial.pattern = '';
+    hintCredencial.textContent = 'Mínimo 4 caracteres';
+
+    if (rol === 'Administrador') {
+      hintRol.textContent = 'Acceso completo al sistema, puede gestionar usuarios y pedidos';
+    } else if (rol === 'Cocina') {
+      hintRol.textContent = 'Acceso al Dashboard para ver y gestionar pedidos en preparación';
+    } else if (rol === 'Domiciliario') {
+      hintRol.textContent = 'Acceso al Dashboard para ver pedidos en camino';
+    } else {
+      hintRol.textContent = 'El rol determina los permisos y método de acceso';
+    }
+  }
+
+  // Mostrar/ocultar requerido según modo
+  var reqCredencial = document.getElementById('reqCredencial');
+  if (reqCredencial && usuarioEditando) {
+    reqCredencial.style.display = 'none';
+  }
+}
+
+/**
+ * Toggle visibilidad de password
+ */
+function togglePasswordVisibility() {
+  var input = document.getElementById('inputCredencialUsuario');
+  var iconShow = document.getElementById('iconShowPass');
+  var iconHide = document.getElementById('iconHidePass');
+
+  if (input.type === 'password') {
+    input.type = 'text';
+    iconShow.style.display = 'none';
+    iconHide.style.display = 'block';
+  } else {
+    input.type = 'password';
+    iconShow.style.display = 'block';
+    iconHide.style.display = 'none';
+  }
+}
+
+/**
+ * Guardar usuario (crear o actualizar)
+ */
+function guardarUsuario() {
+  var errorDiv = document.getElementById('errorFormUsuario');
+  errorDiv.style.display = 'none';
+
+  // Obtener valores
+  var nombre = document.getElementById('inputNombreUsuario').value.trim();
+  var rol = document.getElementById('selectRolUsuario').value;
+  var email = document.getElementById('inputEmailUsuario').value.trim();
+  var credencial = document.getElementById('inputCredencialUsuario').value;
+  var telefono = document.getElementById('inputTelefonoUsuario').value.trim();
+  var activo = document.getElementById('checkActivoUsuario').checked;
+
+  // Validaciones
+  var errores = [];
+
+  if (!nombre || nombre.length < 2) {
+    errores.push('El nombre es obligatorio (mínimo 2 caracteres)');
+  }
+
+  if (!rol) {
+    errores.push('Debe seleccionar un rol');
+  }
+
+  if (rol === 'Mesero') {
+    // Validar PIN
+    if (!usuarioEditando && !credencial) {
+      errores.push('El PIN es obligatorio');
+    }
+    if (credencial && !/^\d{4}$/.test(credencial)) {
+      errores.push('El PIN debe ser de 4 dígitos numéricos');
+    }
+  } else {
+    // Validar email
+    if (!email) {
+      errores.push('El email es obligatorio');
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errores.push('El email no tiene un formato válido');
+    }
+
+    // Validar password
+    if (!usuarioEditando && !credencial) {
+      errores.push('La contraseña es obligatoria');
+    }
+    if (credencial && credencial.length < 4) {
+      errores.push('La contraseña debe tener mínimo 4 caracteres');
+    }
+  }
+
+  // Validar teléfono si se proporciona
+  if (telefono && telefono.length < 7) {
+    errores.push('El teléfono debe tener mínimo 7 dígitos');
+  }
+
+  if (errores.length > 0) {
+    errorDiv.innerHTML = errores.join('<br>');
+    errorDiv.style.display = 'block';
+    return;
+  }
+
+  // Preparar datos
+  var datos = {
+    nombre: nombre,
+    email: email,
+    telefono: telefono,
+    rol: rol,
+    credencial: credencial,
+    activo: activo,
+    idActual: usuarioEditando ? usuarioEditando.id : null
+  };
+
+  console.log('💾 Guardando usuario:', datos);
+  mostrarLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      mostrarLoading(false);
+      console.log('📥 Respuesta guardar:', response);
+
+      if (response.success) {
+        mostrarToast('success', 'Éxito', response.message);
+        cerrarModalUsuario();
+        cargarListaUsuarios();
+      } else {
+        errorDiv.innerHTML = response.error || 'Error al guardar el usuario';
+        errorDiv.style.display = 'block';
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al guardar:', error);
+      errorDiv.innerHTML = 'Error de conexión: ' + error;
+      errorDiv.style.display = 'block';
+    })
+    .adminGestionarUsuarios('guardar', datos, usuarioDashboard);
+}
+
+/**
+ * Abrir modal de confirmación para eliminar
+ */
+function abrirModalEliminar(idUsuario, nombreUsuario) {
+  var modal = document.getElementById('modalConfirmarEliminar');
+  var nombreSpan = document.getElementById('nombreUsuarioEliminar');
+
+  usuarioAEliminar = idUsuario;
+  nombreSpan.textContent = nombreUsuario;
+
+  modal.classList.add('show');
+}
+
+/**
+ * Cerrar modal de confirmación
+ */
+function cerrarModalConfirmarEliminar() {
+  var modal = document.getElementById('modalConfirmarEliminar');
+  modal.classList.remove('show');
+  usuarioAEliminar = null;
+}
+
+/**
+ * Confirmar eliminación (soft delete)
+ */
+function confirmarEliminarUsuario() {
+  if (!usuarioAEliminar) return;
+
+  console.log('🗑️ Desactivando usuario:', usuarioAEliminar);
+  mostrarLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      mostrarLoading(false);
+      cerrarModalConfirmarEliminar();
+
+      if (response.success) {
+        mostrarToast('success', 'Usuario desactivado', response.message);
+        cargarListaUsuarios();
+      } else {
+        mostrarToast('error', 'Error', response.error || 'No se pudo desactivar el usuario');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      cerrarModalConfirmarEliminar();
+      console.error('❌ Error al eliminar:', error);
+      mostrarToast('error', 'Error de conexión', error.toString());
+    })
+    .adminGestionarUsuarios('eliminar', { id: usuarioAEliminar }, usuarioDashboard);
+}
+
+/**
+ * Reactivar usuario desactivado
+ */
+function reactivarUsuario(idUsuario) {
+  if (!confirm('¿Desea reactivar este usuario?')) return;
+
+  console.log('🔄 Reactivando usuario:', idUsuario);
+  mostrarLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      mostrarLoading(false);
+
+      if (response.success) {
+        mostrarToast('success', 'Usuario reactivado', response.message);
+        cargarListaUsuarios();
+      } else {
+        mostrarToast('error', 'Error', response.error || 'No se pudo reactivar el usuario');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al reactivar:', error);
+      mostrarToast('error', 'Error de conexión', error.toString());
+    })
+    .adminReactivarEntidad('usuario', idUsuario, usuarioDashboard);
+}
+
+/**
+ * Escapar HTML para prevenir XSS
+ */
+function escapeHtml(text) {
+  if (!text) return '';
+  var div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
+ * Modificar función cambiarVista para soportar vista de usuarios
+ */
+var cambiarVistaOriginal = cambiarVista;
+cambiarVista = function(vista, elemento) {
+  vistaActual = vista;
+
+  document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
+  if (elemento) elemento.classList.add('active');
+
+  // Ocultar todas las secciones
+  var statsGrid = document.querySelector('.stats-grid');
+  var filtersBar = document.querySelector('.filters-bar');
+  var tableContainer = document.querySelector('.table-container');
+  var seccionUsuarios = document.getElementById('seccionUsuarios');
+
+  if (vista === 'usuarios') {
+    // Mostrar sección de usuarios
+    if (statsGrid) statsGrid.style.display = 'none';
+    if (filtersBar) filtersBar.style.display = 'none';
+    if (tableContainer) tableContainer.style.display = 'none';
+    if (seccionUsuarios) seccionUsuarios.style.display = 'block';
+
+    document.getElementById('vistaTitle').textContent = '👥 Gestión de Usuarios';
+    document.getElementById('vistaSubtitle').textContent = 'Administrar usuarios del sistema';
+
+    // Cargar usuarios si no están cargados
+    if (usuariosCache.length === 0) {
+      cargarListaUsuarios();
+    }
+  } else {
+    // Mostrar vista de pedidos
+    if (statsGrid) statsGrid.style.display = 'grid';
+    if (filtersBar) filtersBar.style.display = 'flex';
+    if (tableContainer) tableContainer.style.display = 'block';
+    if (seccionUsuarios) seccionUsuarios.style.display = 'none';
+
+    var titulos = {
+      'admin': { titulo: '📊 Dashboard Pedidos', subtitulo: 'Vista completa de todos los pedidos' },
+      'cocina': { titulo: '👨‍🍳 Pedidos Comanda', subtitulo: 'Pedidos pendientes y en preparación' },
+      'domicilio': { titulo: '🛵 Pedidos Domicilio', subtitulo: 'Pedidos listos para entregar' }
+    };
+
+    if (titulos[vista]) {
+      document.getElementById('vistaTitle').textContent = titulos[vista].titulo;
+      document.getElementById('vistaSubtitle').textContent = titulos[vista].subtitulo;
+    }
+
+    filtrosActuales.vistaRol = vista === 'admin' ? null : vista;
+    cargarDatosDashboard();
+  }
+};
+
+// Agregar inicialización de módulo de usuarios al cargar el dashboard
+var iniciarDashboardOriginal = iniciarDashboard;
+iniciarDashboard = function() {
+  iniciarDashboardOriginal();
+
+  // Inicializar módulo de usuarios después de cargar el dashboard
+  setTimeout(function() {
+    inicializarModuloUsuarios();
+  }, 100);
+};
+
+console.log('✅ FASE 9.2 - Módulo Gestión de Usuarios cargado correctamente');
+
 </script>
 
 <style>
