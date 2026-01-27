@@ -125,6 +125,13 @@
             <span class="nav-text">Gestión Usuarios</span>
             <span class="nav-badge badge-success" id="badgeUsuarios">0</span>
           </button>
+
+          <!-- FASE 9.3: Pestaña Clientes (solo visible para Administradores) -->
+          <button class="nav-item" data-vista="clientes" id="btnNavClientes" onclick="cambiarVista('clientes', this)" style="display: none;">
+            <span class="nav-icon">👤</span>
+            <span class="nav-text">Gestión Clientes</span>
+            <span class="nav-badge badge-info" id="badgeClientes">0</span>
+          </button>
         </div>
 
         <div class="nav-section">
@@ -421,6 +428,83 @@
 
       </section>
 
+      <!-- ================================================
+           FASE 9.3: SECCIÓN GESTIÓN DE CLIENTES
+      ================================================= -->
+      <section id="seccionClientes" class="section-clientes" style="display: none;">
+
+        <!-- Header de la sección -->
+        <div class="section-header-clientes">
+          <div class="section-title-clientes">
+            <h2>👤 Gestión de Clientes</h2>
+            <p>Administra clientes registrados para domicilios</p>
+          </div>
+          <button class="btn-nuevo-cliente" onclick="abrirModalCliente(null)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Nuevo Cliente</span>
+          </button>
+        </div>
+
+        <!-- Barra de búsqueda clientes -->
+        <div class="clientes-search-bar">
+          <div class="search-input-wrapper">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="busquedaClientes" placeholder="Buscar por nombre, celular o dirección..." oninput="filtrarClientesLocal()">
+          </div>
+          <button class="btn-refresh-clientes" onclick="cargarListaClientes()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6"/>
+              <path d="M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Tabla Desktop Clientes -->
+        <div class="tabla-clientes-desktop">
+          <table class="data-table table-clientes">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Celular</th>
+                <th>Dirección</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyClientes">
+              <tr class="loading-row">
+                <td colspan="5">
+                  <div class="table-loading">
+                    <div class="spinner"></div>
+                    <span>Cargando clientes...</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Cards Mobile Clientes -->
+        <div class="lista-clientes-mobile" id="listaClientesMobile">
+          <!-- Se llena dinámicamente -->
+        </div>
+
+        <!-- Estado vacío clientes -->
+        <div id="emptyStateClientes" class="empty-state" style="display: none;">
+          <div class="empty-icon">📋</div>
+          <h3>No hay clientes</h3>
+          <p>No se encontraron clientes con los criterios de búsqueda</p>
+        </div>
+
+      </section>
+
     </main>
   </div>
   
@@ -671,6 +755,110 @@
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
           Desactivar Usuario
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================
+       FASE 9.3: MODAL CREAR/EDITAR CLIENTE
+  ================================================= -->
+  <div id="modalCliente" class="modal">
+    <div class="modal-content modal-cliente">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h2 id="modalClienteTitulo">➕ Nuevo Cliente</h2>
+        </div>
+        <button class="btn-close" onclick="cerrarModalCliente()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <form id="formCliente" onsubmit="return false;">
+
+          <!-- Nombre -->
+          <div class="form-group-cliente">
+            <label for="inputNombreCliente">👤 Nombre completo <span class="required">*</span></label>
+            <input type="text" id="inputNombreCliente" placeholder="Ej: María García" maxlength="100" required>
+          </div>
+
+          <!-- Celular -->
+          <div class="form-group-cliente">
+            <label for="inputCelularCliente">📱 Celular <span class="required">*</span></label>
+            <input type="tel" id="inputCelularCliente" placeholder="3001234567" maxlength="15" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <span class="hint-text">Solo números, mínimo 7 dígitos. Se usará como identificador único.</span>
+          </div>
+
+          <!-- Dirección -->
+          <div class="form-group-cliente">
+            <label for="inputDireccionCliente">📍 Dirección de domicilio</label>
+            <input type="text" id="inputDireccionCliente" placeholder="Carrera 45 #12-34, Barrio Centro" maxlength="200">
+          </div>
+
+          <!-- Email -->
+          <div class="form-group-cliente">
+            <label for="inputEmailCliente">📧 Correo electrónico</label>
+            <input type="email" id="inputEmailCliente" placeholder="correo@ejemplo.com" maxlength="100">
+          </div>
+
+          <!-- Notas -->
+          <div class="form-group-cliente">
+            <label for="inputNotasCliente">📝 Notas adicionales</label>
+            <textarea id="inputNotasCliente" placeholder="Cliente VIP, preferencias especiales, alergias, etc." maxlength="500" rows="3"></textarea>
+          </div>
+
+          <!-- Mensaje de error -->
+          <div id="errorFormCliente" class="error-form-cliente" style="display: none;"></div>
+
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cerrarModalCliente()">Cancelar</button>
+        <button type="button" class="btn-primary-cliente" onclick="guardarCliente()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span id="btnGuardarClienteText">Guardar Cliente</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================
+       FASE 9.3: MODAL CONFIRMAR ELIMINACIÓN CLIENTE
+  ================================================= -->
+  <div id="modalConfirmarEliminarCliente" class="modal">
+    <div class="modal-content modal-sm">
+      <div class="modal-header modal-header-danger">
+        <div class="modal-title">
+          <h2>⚠️ Confirmar Eliminación</h2>
+        </div>
+        <button class="btn-close" onclick="cerrarModalConfirmarEliminarCliente()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message">¿Está seguro que desea eliminar al cliente <strong id="nombreClienteEliminar">-</strong>?</p>
+        <p class="confirm-note">El cliente no será eliminado permanentemente, solo se marcará como inactivo.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cerrarModalConfirmarEliminarCliente()">Cancelar</button>
+        <button type="button" class="btn-danger" onclick="confirmarEliminarCliente()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Eliminar Cliente
         </button>
       </div>
     </div>
