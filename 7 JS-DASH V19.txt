@@ -1805,6 +1805,454 @@ iniciarDashboard = function() {
 
 console.log('✅ FASE 9.2 - Módulo Gestión de Usuarios cargado correctamente');
 
+// ============================================================
+// FASE 9.3: GESTIÓN DE CLIENTES - CRUD ADMIN
+// ============================================================
+
+// Variables globales para gestión de clientes
+var clientesGlobal = [];
+var clienteEditando = null;
+
+/**
+ * Inicializar módulo de clientes cuando el usuario es Admin
+ */
+function inicializarModuloClientes() {
+  try {
+    // Verificar si el usuario es Administrador
+    if (usuarioDashboard && usuarioDashboard.esSuperAdmin) {
+      var btnNavClientes = document.getElementById('btnNavClientes');
+      if (btnNavClientes) {
+        btnNavClientes.style.display = 'flex';
+      }
+      console.log('[CLIENTES] ✅ Módulo de clientes habilitado para Admin');
+    }
+  } catch(error) {
+    console.error('[CLIENTES] Error al inicializar módulo:', error);
+  }
+}
+
+/**
+ * Cargar vista de clientes
+ */
+function cargarVistaClientes() {
+  try {
+    console.log('[CLIENTES] Cargando vista de clientes');
+    cargarListaClientes();
+  } catch(error) {
+    console.error('[CLIENTES] Error al cargar vista:', error);
+    mostrarToast('error', 'Error', 'Error al cargar vista de clientes');
+  }
+}
+
+/**
+ * Cargar lista de clientes desde el backend
+ */
+function cargarListaClientes() {
+  try {
+    console.log('[CLIENTES] 🔄 Solicitando lista de clientes al backend');
+
+    var tbodyClientes = document.getElementById('tbodyClientes');
+    var listaClientesMobile = document.getElementById('listaClientesMobile');
+    var emptyStateClientes = document.getElementById('emptyStateClientes');
+
+    // Mostrar loading
+    if (tbodyClientes) {
+      tbodyClientes.innerHTML = '<tr class="loading-row"><td colspan="5"><div class="table-loading"><div class="spinner"></div><span>⏳ Cargando clientes...</span></div></td></tr>';
+    }
+    if (listaClientesMobile) {
+      listaClientesMobile.innerHTML = '<div class="table-loading"><div class="spinner"></div><span>⏳ Cargando clientes...</span></div>';
+    }
+    if (emptyStateClientes) {
+      emptyStateClientes.style.display = 'none';
+    }
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        console.log('[CLIENTES] 📥 Respuesta recibida:', response);
+
+        if (response.success) {
+          clientesGlobal = response.data || [];
+          renderizarTablaClientes(clientesGlobal);
+          actualizarBadgeClientes();
+          console.log('[CLIENTES] ✅ Cargados ' + clientesGlobal.length + ' clientes');
+        } else {
+          console.error('[CLIENTES] ❌ Error en respuesta:', response.error);
+          if (tbodyClientes) {
+            tbodyClientes.innerHTML = '<tr><td colspan="5" class="texto-error" style="text-align: center; color: var(--danger);">❌ Error: ' + (response.error || 'No se pudieron cargar los clientes') + '</td></tr>';
+          }
+        }
+      })
+      .withFailureHandler(function(error) {
+        console.error('[CLIENTES] ❌ Error de conexión:', error);
+        if (tbodyClientes) {
+          tbodyClientes.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">❌ Error de conexión</td></tr>';
+        }
+        mostrarToast('error', 'Error de conexión', 'No se pudo conectar con el servidor');
+      })
+      .adminGestionarClientes('leer', null);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al cargar lista:', error);
+  }
+}
+
+/**
+ * Renderizar tabla de clientes (Desktop y Mobile)
+ */
+function renderizarTablaClientes(clientes) {
+  try {
+    var tbodyClientes = document.getElementById('tbodyClientes');
+    var listaClientesMobile = document.getElementById('listaClientesMobile');
+    var emptyStateClientes = document.getElementById('emptyStateClientes');
+
+    if (!clientes || clientes.length === 0) {
+      if (tbodyClientes) tbodyClientes.innerHTML = '';
+      if (listaClientesMobile) listaClientesMobile.innerHTML = '';
+      if (emptyStateClientes) emptyStateClientes.style.display = 'block';
+      return;
+    }
+
+    if (emptyStateClientes) emptyStateClientes.style.display = 'none';
+
+    // Renderizar tabla desktop
+    var htmlDesktop = '';
+    clientes.forEach(function(cliente) {
+      var clienteJson = JSON.stringify(cliente).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+      htmlDesktop += '<tr>';
+      htmlDesktop += '<td><div class="cliente-nombre-celda"><strong>' + escapeHtml(cliente.nombre || '-') + '</strong></div></td>';
+      htmlDesktop += '<td><span class="cliente-telefono">📱 ' + escapeHtml(cliente.celular || '-') + '</span></td>';
+      htmlDesktop += '<td><div class="cliente-direccion" title="' + escapeHtml(cliente.domicilio || '') + '">' + escapeHtml(truncarTexto(cliente.domicilio, 30) || '-') + '</div></td>';
+      htmlDesktop += '<td>' + escapeHtml(cliente.email || '-') + '</td>';
+      htmlDesktop += '<td><div class="acciones-cliente"><button class="btn-accion-cliente btn-editar-cliente" onclick="abrirModalEditarCliente(' + clienteJson + ')">✏️ Editar</button></div></td>';
+      htmlDesktop += '</tr>';
+    });
+
+    if (tbodyClientes) tbodyClientes.innerHTML = htmlDesktop;
+
+    // Renderizar cards mobile
+    var htmlMobile = '';
+    clientes.forEach(function(cliente) {
+      var clienteJson = JSON.stringify(cliente).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+      htmlMobile += '<div class="card-cliente-mobile">';
+      htmlMobile += '<div class="card-cliente-header"><div class="card-cliente-info"><div class="cliente-avatar-mobile">👤</div><div><div class="card-cliente-nombre">' + escapeHtml(cliente.nombre || 'Sin nombre') + '</div><div class="card-cliente-telefono">📱 ' + escapeHtml(cliente.celular || '-') + '</div></div></div></div>';
+      htmlMobile += '<div class="card-cliente-contacto">';
+      if (cliente.domicilio) htmlMobile += '<div class="card-cliente-contacto-item">🏠 ' + escapeHtml(cliente.domicilio) + '</div>';
+      if (cliente.email) htmlMobile += '<div class="card-cliente-contacto-item">✉️ ' + escapeHtml(cliente.email) + '</div>';
+      htmlMobile += '</div>';
+      htmlMobile += '<div class="card-cliente-actions"><button class="btn-accion-cliente btn-editar-cliente" onclick="abrirModalEditarCliente(' + clienteJson + ')">✏️ Editar</button></div>';
+      htmlMobile += '</div>';
+    });
+
+    if (listaClientesMobile) listaClientesMobile.innerHTML = htmlMobile;
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al renderizar tabla:', error);
+  }
+}
+
+/**
+ * Filtrar clientes en tiempo real
+ */
+function filtrarClientes() {
+  try {
+    var busqueda = document.getElementById('buscadorClientes').value.toLowerCase().trim();
+
+    if (!busqueda) {
+      renderizarTablaClientes(clientesGlobal);
+      return;
+    }
+
+    var clientesFiltrados = clientesGlobal.filter(function(cliente) {
+      var nombre = (cliente.nombre || '').toLowerCase();
+      var telefono = (cliente.celular || '').toLowerCase();
+      var direccion = (cliente.domicilio || '').toLowerCase();
+
+      return nombre.indexOf(busqueda) !== -1 ||
+             telefono.indexOf(busqueda) !== -1 ||
+             direccion.indexOf(busqueda) !== -1;
+    });
+
+    renderizarTablaClientes(clientesFiltrados);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al filtrar:', error);
+  }
+}
+
+/**
+ * Actualizar badge de clientes en el menú
+ */
+function actualizarBadgeClientes() {
+  try {
+    var badge = document.getElementById('badgeClientes');
+    if (badge) {
+      badge.textContent = clientesGlobal.length;
+    }
+  } catch(error) {
+    console.error('[CLIENTES] Error al actualizar badge:', error);
+  }
+}
+
+/**
+ * Abrir modal para editar cliente
+ */
+function abrirModalEditarCliente(cliente) {
+  try {
+    console.log('[CLIENTES] Abriendo modal para editar:', cliente);
+
+    clienteEditando = cliente;
+
+    // Llenar campos del modal
+    document.getElementById('clienteIdHidden').value = cliente.id || '';
+    document.getElementById('inputClienteNombre').value = cliente.nombre || '';
+    document.getElementById('inputClienteTelefono').value = cliente.celular || '';
+    document.getElementById('inputClienteDireccion').value = cliente.domicilio || '';
+    document.getElementById('inputClienteEmail').value = cliente.email || '';
+    document.getElementById('inputClienteNotas').value = cliente.notas || '';
+
+    // Ocultar mensaje de error
+    var errorDiv = document.getElementById('errorFormCliente');
+    if (errorDiv) errorDiv.style.display = 'none';
+
+    // Mostrar modal
+    document.getElementById('modalEditarCliente').classList.add('show');
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al abrir modal:', error);
+    mostrarToast('error', 'Error', 'Error al abrir modal de edición');
+  }
+}
+
+/**
+ * Cerrar modal de cliente
+ */
+function cerrarModalCliente() {
+  try {
+    document.getElementById('modalEditarCliente').classList.remove('show');
+    clienteEditando = null;
+  } catch(error) {
+    console.error('[CLIENTES] Error al cerrar modal:', error);
+  }
+}
+
+/**
+ * Guardar cambios del cliente
+ */
+function guardarCliente() {
+  try {
+    var errorDiv = document.getElementById('errorFormCliente');
+    if (errorDiv) errorDiv.style.display = 'none';
+
+    // Obtener valores
+    var nombre = document.getElementById('inputClienteNombre').value.trim();
+    var telefono = document.getElementById('inputClienteTelefono').value.trim();
+    var direccion = document.getElementById('inputClienteDireccion').value.trim();
+    var email = document.getElementById('inputClienteEmail').value.trim();
+    var notas = document.getElementById('inputClienteNotas').value.trim();
+
+    // Validaciones
+    var errores = [];
+
+    if (!nombre) {
+      errores.push('El nombre es obligatorio');
+    }
+
+    if (!telefono || telefono.length !== 10 || !/^\d+$/.test(telefono)) {
+      errores.push('El teléfono debe tener exactamente 10 dígitos');
+    }
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errores.push('El email no tiene un formato válido');
+    }
+
+    if (errores.length > 0) {
+      if (errorDiv) {
+        errorDiv.innerHTML = '⚠️ ' + errores.join('<br>⚠️ ');
+        errorDiv.style.display = 'block';
+      }
+      mostrarToast('warning', 'Validación', errores[0]);
+      return;
+    }
+
+    // Preparar datos
+    var datosCliente = {
+      idActual: clienteEditando.id,
+      nombre: nombre,
+      celular: telefono,
+      domicilio: direccion,
+      email: email,
+      notas: notas
+    };
+
+    console.log('[CLIENTES] 💾 Guardando cliente:', datosCliente);
+    mostrarLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        mostrarLoading(false);
+
+        if (response.success) {
+          mostrarToast('success', '✅ Cliente actualizado', response.message || 'Los datos se guardaron correctamente');
+          cerrarModalCliente();
+          cargarListaClientes(); // Recargar tabla
+        } else {
+          if (errorDiv) {
+            errorDiv.innerHTML = '❌ ' + (response.error || 'Error al guardar');
+            errorDiv.style.display = 'block';
+          }
+          mostrarToast('error', 'Error', response.error || 'No se pudo guardar el cliente');
+        }
+      })
+      .withFailureHandler(function(error) {
+        mostrarLoading(false);
+        console.error('[CLIENTES] ❌ Error de conexión:', error);
+        mostrarToast('error', 'Error de conexión', 'No se pudo guardar el cliente');
+      })
+      .adminGestionarClientes('guardar', datosCliente);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al guardar:', error);
+    mostrarToast('error', 'Error', 'Error al guardar cliente');
+  }
+}
+
+/**
+ * Confirmar eliminación de cliente
+ */
+function confirmarEliminarCliente() {
+  try {
+    if (!clienteEditando) {
+      mostrarToast('warning', 'Advertencia', 'No hay cliente seleccionado');
+      return;
+    }
+
+    var confirmar = confirm(
+      '⚠️ ¿Estás seguro de eliminar a ' + clienteEditando.nombre + '?\n\n' +
+      'Esta acción marcará al cliente como inactivo.'
+    );
+
+    if (!confirmar) return;
+
+    console.log('[CLIENTES] 🗑️ Eliminando cliente:', clienteEditando.id);
+    mostrarLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        mostrarLoading(false);
+
+        if (response.success) {
+          mostrarToast('success', '✅ Cliente eliminado', response.message || 'El cliente fue eliminado correctamente');
+          cerrarModalCliente();
+          cargarListaClientes();
+        } else {
+          mostrarToast('error', 'Error', response.error || 'No se pudo eliminar el cliente');
+        }
+      })
+      .withFailureHandler(function(error) {
+        mostrarLoading(false);
+        console.error('[CLIENTES] ❌ Error al eliminar:', error);
+        mostrarToast('error', 'Error de conexión', 'No se pudo eliminar el cliente');
+      })
+      .adminGestionarClientes('eliminar', { idActual: clienteEditando.id });
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al eliminar:', error);
+    mostrarToast('error', 'Error', 'Error al eliminar cliente');
+  }
+}
+
+/**
+ * Función auxiliar para truncar texto
+ */
+function truncarTexto(texto, maxLength) {
+  if (!texto) return '';
+  if (texto.length <= maxLength) return texto;
+  return texto.substring(0, maxLength) + '...';
+}
+
+/**
+ * Modificar función cambiarVista para soportar vista de clientes
+ */
+var cambiarVistaConUsuarios = cambiarVista;
+cambiarVista = function(vista, elemento) {
+  vistaActual = vista;
+
+  document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
+  if (elemento) elemento.classList.add('active');
+
+  // Ocultar todas las secciones
+  var statsGrid = document.querySelector('.stats-grid');
+  var filtersBar = document.querySelector('.filters-bar');
+  var tableContainer = document.querySelector('.table-container');
+  var seccionUsuarios = document.getElementById('seccionUsuarios');
+  var seccionClientes = document.getElementById('seccionClientes');
+
+  // Ocultar todas las secciones primero
+  if (statsGrid) statsGrid.style.display = 'none';
+  if (filtersBar) filtersBar.style.display = 'none';
+  if (tableContainer) tableContainer.style.display = 'none';
+  if (seccionUsuarios) seccionUsuarios.style.display = 'none';
+  if (seccionClientes) seccionClientes.style.display = 'none';
+
+  if (vista === 'clientes') {
+    // Mostrar sección de clientes
+    if (seccionClientes) seccionClientes.style.display = 'block';
+
+    document.getElementById('vistaTitle').textContent = '👤 Gestión de Clientes';
+    document.getElementById('vistaSubtitle').textContent = 'Administrar clientes registrados';
+
+    // Cargar clientes si no están cargados
+    if (clientesGlobal.length === 0) {
+      cargarListaClientes();
+    }
+  } else if (vista === 'usuarios') {
+    // Mostrar sección de usuarios
+    if (seccionUsuarios) seccionUsuarios.style.display = 'block';
+
+    document.getElementById('vistaTitle').textContent = '👥 Gestión de Usuarios';
+    document.getElementById('vistaSubtitle').textContent = 'Administrar usuarios del sistema';
+
+    // Cargar usuarios si no están cargados
+    if (usuariosCache.length === 0) {
+      cargarListaUsuarios();
+    }
+  } else {
+    // Mostrar vista de pedidos
+    if (statsGrid) statsGrid.style.display = 'grid';
+    if (filtersBar) filtersBar.style.display = 'flex';
+    if (tableContainer) tableContainer.style.display = 'block';
+
+    var titulos = {
+      'admin': { titulo: '📊 Dashboard Pedidos', subtitulo: 'Vista completa de todos los pedidos' },
+      'cocina': { titulo: '👨‍🍳 Pedidos Comanda', subtitulo: 'Pedidos pendientes y en preparación' },
+      'domicilio': { titulo: '🛵 Pedidos Domicilio', subtitulo: 'Pedidos listos para entregar' }
+    };
+
+    if (titulos[vista]) {
+      document.getElementById('vistaTitle').textContent = titulos[vista].titulo;
+      document.getElementById('vistaSubtitle').textContent = titulos[vista].subtitulo;
+    }
+
+    filtrosActuales.vistaRol = vista === 'admin' ? null : vista;
+    cargarDatosDashboard();
+  }
+};
+
+// Agregar inicialización de módulo de clientes al cargar el dashboard
+var iniciarDashboardConUsuarios = iniciarDashboard;
+iniciarDashboard = function() {
+  iniciarDashboardConUsuarios();
+
+  // Inicializar módulo de clientes después de cargar el dashboard
+  setTimeout(function() {
+    inicializarModuloClientes();
+  }, 150);
+};
+
+console.log('✅ FASE 9.3 - Módulo Gestión de Clientes cargado correctamente');
+
 </script>
 
 <style>

@@ -1445,4 +1445,411 @@ body {
   }
 }
 
+/* ============================================================
+   FASE 9.3: ESTILOS GESTIÓN DE CLIENTES
+============================================================ */
+
+/* Sección de Clientes */
+.section-clientes {
+  padding: 0;
+}
+
+.section-header-clientes {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  background: var(--bg-card);
+  border-radius: var(--border-radius);
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.section-title-clientes h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.section-title-clientes p {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* Barra de búsqueda clientes */
+.clientes-search-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 0 4px;
+}
+
+.btn-refresh-clientes {
+  padding: 12px;
+  background: var(--bg-card);
+  border: 2px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btn-refresh-clientes:hover {
+  background: var(--gray-100);
+  border-color: var(--primary);
+}
+
+.btn-refresh-clientes svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-secondary);
+}
+
+/* Tabla Desktop Clientes */
+.tabla-clientes-desktop {
+  background: var(--bg-card);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.table-clientes {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-clientes th {
+  background: var(--gray-50);
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border-color);
+}
+
+.table-clientes td {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
+}
+
+.table-clientes tr:last-child td {
+  border-bottom: none;
+}
+
+.table-clientes tr:hover {
+  background: var(--gray-50);
+}
+
+.cliente-nombre-celda {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cliente-nombre-celda strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.cliente-telefono {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.cliente-direccion {
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acciones-cliente {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-accion-cliente {
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-editar-cliente {
+  background: var(--gray-100);
+  color: var(--text-secondary);
+}
+
+.btn-editar-cliente:hover {
+  background: var(--primary);
+  color: white;
+}
+
+/* Cards Mobile Clientes */
+.lista-clientes-mobile {
+  display: none;
+}
+
+.card-cliente-mobile {
+  background: var(--bg-card);
+  border-radius: var(--border-radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.card-cliente-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.card-cliente-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cliente-avatar-mobile {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, var(--info), var(--primary));
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.card-cliente-nombre {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.card-cliente-telefono {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.card-cliente-contacto {
+  padding: 12px;
+  background: var(--gray-50);
+  border-radius: var(--border-radius-sm);
+  margin-bottom: 12px;
+}
+
+.card-cliente-contacto-item {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.card-cliente-contacto-item:last-child {
+  margin-bottom: 0;
+}
+
+.card-cliente-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.card-cliente-actions .btn-accion-cliente {
+  flex: 1;
+  justify-content: center;
+  padding: 10px;
+}
+
+/* Modal Cliente */
+.modal-cliente {
+  max-width: 500px;
+}
+
+.form-group-cliente {
+  margin-bottom: 20px;
+}
+
+.form-group-cliente label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.form-group-cliente .required {
+  color: var(--danger);
+}
+
+.form-group-cliente input,
+.form-group-cliente textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--bg-card);
+  transition: var(--transition-fast);
+}
+
+.form-group-cliente input:focus,
+.form-group-cliente textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.form-group-cliente textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.error-form-cliente {
+  background: var(--danger-light);
+  color: var(--danger);
+  padding: 12px 16px;
+  border-radius: var(--border-radius-sm);
+  font-size: 14px;
+  border-left: 4px solid var(--danger);
+  margin-top: 16px;
+}
+
+.modal-footer-cliente {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-primary-cliente {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-primary-cliente:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-primary-cliente svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-danger-cliente {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--danger-light);
+  color: var(--danger);
+  border: 2px solid var(--danger);
+  border-radius: var(--border-radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-danger-cliente:hover {
+  background: var(--danger);
+  color: white;
+}
+
+.btn-danger-cliente svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Responsive Mobile Clientes */
+@media (max-width: 768px) {
+  .section-header-clientes {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .tabla-clientes-desktop {
+    display: none;
+  }
+
+  .lista-clientes-mobile {
+    display: block;
+  }
+
+  .clientes-search-bar {
+    flex-direction: column;
+  }
+
+  .btn-refresh-clientes {
+    align-self: flex-end;
+  }
+
+  .modal-footer-cliente {
+    flex-direction: column;
+  }
+
+  .modal-footer-cliente button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .section-header-clientes {
+    padding: 16px;
+  }
+
+  .section-title-clientes h2 {
+    font-size: 18px;
+  }
+
+  .card-cliente-mobile {
+    padding: 14px;
+  }
+
+  .card-cliente-nombre {
+    font-size: 15px;
+  }
+
+  .modal-cliente {
+    margin: 10px;
+  }
+
+  .form-group-cliente label {
+    font-size: 13px;
+  }
+}
+
+/* ============================================================
+   FIN ESTILOS: GESTIÓN DE CLIENTES (FASE 9.3)
+============================================================ */
+
 </style>
