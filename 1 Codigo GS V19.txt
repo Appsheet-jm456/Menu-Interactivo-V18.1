@@ -1691,12 +1691,13 @@ function obtenerItemsPedidoMesero(idPedido) {
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
     const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
-    
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+
     if (!sheetDetalle || !sheetProductos) return { success: false, items: [] };
-    
+
     const dataDetalle = sheetDetalle.getDataRange().getValues();
     const dataProductos = sheetProductos.getDataRange().getValues();
-    
+
     var productosMap = {};
     for (var i = 1; i < dataProductos.length; i++) {
       productosMap[String(dataProductos[i][0]).trim().toUpperCase()] = {
@@ -1704,15 +1705,15 @@ function obtenerItemsPedidoMesero(idPedido) {
         precio: dataProductos[i][4]
       };
     }
-    
+
     const idPedidoStr = String(idPedido).trim().toUpperCase();
     const items = [];
-    
+
     for (var j = 1; j < dataDetalle.length; j++) {
       if (String(dataDetalle[j][1]).trim().toUpperCase() === idPedidoStr) {
         const idProducto = String(dataDetalle[j][3]).trim().toUpperCase();
         const producto = productosMap[idProducto] || { nombre: 'Producto', precio: 0 };
-        
+
         items.push({
           idDetalle: String(dataDetalle[j][0]),
           idProducto: String(dataDetalle[j][3]),
@@ -1725,10 +1726,26 @@ function obtenerItemsPedidoMesero(idPedido) {
         });
       }
     }
-    
-    return { success: true, items: items };
+
+    // V18.3 FIX: Obtener estadoLogistico del pedido para el badge de cocina
+    var estadoPedido = 'Solicitado';
+    if (sheetPedidos) {
+      var dataPedidos = sheetPedidos.getDataRange().getValues();
+      var headers = dataPedidos[0] || [];
+      var tieneNuevaEstructura = headers.length >= 16;
+      var colEstado = tieneNuevaEstructura ? 4 : 3; // Columna del estadoLogistico
+
+      for (var k = 1; k < dataPedidos.length; k++) {
+        if (String(dataPedidos[k][0]).trim().toUpperCase() === idPedidoStr) {
+          estadoPedido = String(dataPedidos[k][colEstado] || 'Solicitado').trim();
+          break;
+        }
+      }
+    }
+
+    return { success: true, items: items, estado: estadoPedido };
   } catch (error) {
-    return { success: false, items: [] };
+    return { success: false, items: [], estado: 'Solicitado' };
   }
 }
 
