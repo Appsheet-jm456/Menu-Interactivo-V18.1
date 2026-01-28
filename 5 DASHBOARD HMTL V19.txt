@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1E293B">
+  <title>Dashboard Operativo - CloudPyme POS</title>
+  <?!= include('CSS-Dashboard'); ?>
+</head>
+<body>
+  
+  <!-- ================================================
+       PANTALLA DE LOGIN DASHBOARD V19 FASE 9 
+  ================================================= -->
+  <div id="loginDashboard" class="login-screen active">
+    <div class="login-wrapper">
+      <div class="login-card">
+        <div class="login-header">
+          <div class="login-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <h1>CloudPyme POS</h1>
+          <p>Dashboard Operativo</p>
+        </div>
+        
+        <form id="loginForm" onsubmit="loginDashboard(event)">
+          <div class="form-group">
+            <label for="loginEmail">Correo electrónico</label>
+            <div class="input-wrapper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                <polyline points="22,6 12,13 2,6"/>
+              </svg>
+              <input type="email" id="loginEmail" placeholder="correo@empresa.com" required>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="loginPassword">Contraseña</label>
+            <div class="input-wrapper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <input type="password" id="loginPassword" placeholder="••••••••" required>
+            </div>
+          </div>
+          
+          <div id="loginError" class="error-alert"></div>
+          
+          <button type="submit" class="btn-login">
+            <span>Ingresar al Dashboard</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+        
+        <div class="login-footer">
+          <p>Solo personal autorizado</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ================================================
+       DASHBOARD PRINCIPAL
+  ================================================= -->
+  <div id="dashboardMain" class="dashboard-container">
+    
+    <!-- SIDEBAR -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-name">CloudPyme</span>
+            <span class="brand-sub">POS Dashboard</span>
+          </div>
+        </div>
+        <button class="sidebar-toggle" onclick="toggleSidebar()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <span class="nav-section-title">Vistas</span>
+          
+          <button class="nav-item active" data-vista="admin" onclick="cambiarVista('admin', this)">
+            <span class="nav-icon">📊</span>
+            <span class="nav-text">Dashboard Pedidos</span>
+            <span class="nav-badge" id="badgeAdmin">0</span>
+          </button>
+          
+          <button class="nav-item" data-vista="cocina" onclick="cambiarVista('cocina', this)">
+            <span class="nav-icon">🍳</span>
+            <span class="nav-text">Pedidos Comanda</span>
+            <span class="nav-badge badge-warning" id="badgeCocina">0</span>
+          </button>
+          
+          <button class="nav-item" data-vista="domicilio" onclick="cambiarVista('domicilio', this)">
+            <span class="nav-icon">🛵</span>
+            <span class="nav-text">Pedidos Domicilio</span>
+            <span class="nav-badge badge-info" id="badgeDomicilio">0</span>
+          </button>
+
+          <!-- FASE 9.2: Pestaña Usuarios (solo visible para Administradores) -->
+          <button class="nav-item" data-vista="usuarios" id="btnNavUsuarios" onclick="cambiarVista('usuarios', this)" style="display: none;">
+            <span class="nav-icon">👥</span>
+            <span class="nav-text">Gestión Usuarios</span>
+            <span class="nav-badge badge-success" id="badgeUsuarios">0</span>
+          </button>
+        </div>
+
+        <div class="nav-section">
+          <span class="nav-section-title">Acciones</span>
+          
+          <button class="nav-item" onclick="refrescarDatos()">
+            <span class="nav-icon">🔄</span>
+            <span class="nav-text">Actualizar</span>
+          </button>
+          
+          <button class="nav-item" onclick="exportarCSV()">
+            <span class="nav-icon">📥</span>
+            <span class="nav-text">Exportar CSV</span>
+          </button>
+        </div>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <div class="user-avatar">
+            <span id="userInitial">U</span>
+          </div>
+          <div class="user-details">
+            <span class="user-name" id="sidebarUserName">Usuario</span>
+            <span class="user-role" id="sidebarUserRole">Rol</span>
+          </div>
+        </div>
+        <button class="btn-logout" onclick="cerrarSesionDashboard()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    </aside>
+    
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="main-content">
+      
+      <!-- HEADER -->
+      <header class="content-header">
+        <div class="header-left">
+          <button class="mobile-menu-btn" onclick="toggleSidebar()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+          <div class="page-title">
+            <h1 id="vistaTitle">📊 Dashboard Pedidos</h1>
+            <p id="vistaSubtitle">Vista completa de todos los pedidos</p>
+          </div>
+        </div>
+        
+        <div class="header-right">
+          <div class="header-datetime">
+            <span id="currentDate">--</span>
+            <span id="currentTime">--:--</span>
+          </div>
+        </div>
+      </header>
+      
+      <!-- TARJETAS DE ESTADÍSTICAS -->
+      <section class="stats-grid">
+        <div class="stat-card stat-pending">
+          <div class="stat-icon">📋</div>
+          <div class="stat-content">
+            <span class="stat-value" id="statPendientes">0</span>
+            <span class="stat-label">Pendientes</span>
+          </div>
+        </div>
+        
+        <div class="stat-card stat-cooking">
+          <div class="stat-icon">🍳</div>
+          <div class="stat-content">
+            <span class="stat-value" id="statPreparacion">0</span>
+            <span class="stat-label">En Preparación</span>
+          </div>
+        </div>
+        
+        <div class="stat-card stat-delivery">
+          <div class="stat-icon">🚚</div>
+          <div class="stat-content">
+            <span class="stat-value" id="statEnviados">0</span>
+            <span class="stat-label">En Camino</span>
+          </div>
+        </div>
+        
+        <div class="stat-card stat-completed">
+          <div class="stat-icon">✅</div>
+          <div class="stat-content">
+            <span class="stat-value" id="statEntregados">0</span>
+            <span class="stat-label">Entregados</span>
+          </div>
+        </div>
+        
+        <div class="stat-card stat-sales">
+          <div class="stat-icon">💰</div>
+          <div class="stat-content">
+            <span class="stat-value" id="statVentas">$0</span>
+            <span class="stat-label">Ventas del Día</span>
+          </div>
+        </div>
+      </section>
+      
+      <!-- FILTROS -->
+      <section class="filters-bar">
+        <div class="filter-group">
+          <label for="filtroFecha">📅 Fecha</label>
+          <input type="date" id="filtroFecha" onchange="aplicarFiltros()">
+        </div>
+        
+        <div class="filter-group">
+          <label for="filtroEtapa">🔄 Etapa</label>
+          <select id="filtroEtapa" onchange="aplicarFiltros()">
+            <option value="Todos">Todas las etapas</option>
+            <option value="Solicitado">📋 Solicitado</option>
+            <option value="Recibido">🍳 Recibido (En preparación)</option>
+            <option value="Enviado">🚚 Enviado</option>
+            <option value="Entregado">✅ Entregado</option>
+          </select>
+        </div>
+        
+        <div class="filter-group">
+          <label for="filtroEstado">💼 Estado Contable</label>
+          <select id="filtroEstado" onchange="aplicarFiltros()">
+            <option value="Todos">Todos</option>
+            <option value="Abierto">🟢 Abierto</option>
+            <option value="Cerrado">🔵 Cerrado</option>
+            <option value="Cancelado">🔴 Cancelado</option>
+          </select>
+        </div>
+        
+        <!-- NUEVO FILTRO: Tipo de Entrega -->
+        <div class="filter-group">
+          <label for="filtroTipoEntrega">🚗 Tipo Entrega</label>
+          <select id="filtroTipoEntrega" onchange="aplicarFiltros()">
+            <option value="Todos">Todos</option>
+            <option value="Domicilio">🏠 Domicilio</option>
+            <option value="Recoger en tienda">🏪 Recoger en tienda</option>
+          </select>
+        </div>
+        
+        <div class="filter-actions">
+          <button class="btn-filter-clear" onclick="limpiarFiltros()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            Limpiar
+          </button>
+          <button class="btn-filter-apply" onclick="aplicarFiltros()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+            Filtrar
+          </button>
+        </div>
+      </section>
+      
+      <!-- TABLA DE PEDIDOS -->
+      <section class="table-container">
+        <div class="table-header">
+          <h3>📦 Pedidos <span id="pedidosCount">(0)</span></h3>
+          <div class="table-actions">
+            <button class="btn-icon" onclick="refrescarDatos()" title="Actualizar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6"/>
+                <path d="M1 20v-6h6"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </button>
+            <button class="btn-icon" onclick="exportarCSV()" title="Exportar CSV">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID Pedido</th>
+                <th>Cliente</th>
+                <th>Fecha/Hora</th>
+                <th>Etapa</th>
+                <th>Total</th>
+                <th>Tipo Entrega</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tablaPedidos">
+              <tr class="loading-row">
+                <td colspan="8">
+                  <div class="table-loading">
+                    <div class="spinner"></div>
+                    <span>Cargando pedidos...</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Estado vacío -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+          <div class="empty-icon">🔭</div>
+          <h3>No hay pedidos</h3>
+          <p>No se encontraron pedidos con los filtros seleccionados</p>
+        </div>
+      </section>
+
+      <!-- ================================================
+           FASE 9.2: SECCIÓN GESTIÓN DE USUARIOS
+      ================================================= -->
+      <section id="seccionUsuarios" class="section-usuarios" style="display: none;">
+
+        <!-- Header de la sección -->
+        <div class="section-header-usuarios">
+          <div class="section-title-usuarios">
+            <h2>👥 Gestión de Usuarios</h2>
+            <p>Administra usuarios internos del sistema</p>
+          </div>
+          <button class="btn-nuevo-usuario" onclick="abrirModalUsuario(null)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Nuevo Usuario</span>
+          </button>
+        </div>
+
+        <!-- Barra de búsqueda usuarios -->
+        <div class="usuarios-search-bar">
+          <div class="search-input-wrapper">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="busquedaUsuarios" placeholder="Buscar por nombre, email o teléfono..." oninput="filtrarUsuariosLocal()">
+          </div>
+          <button class="btn-refresh-usuarios" onclick="cargarListaUsuarios()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6"/>
+              <path d="M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Tabla Desktop -->
+        <div class="tabla-usuarios-desktop">
+          <table class="data-table table-usuarios">
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Rol</th>
+                <th>Contacto</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyUsuarios">
+              <tr class="loading-row">
+                <td colspan="5">
+                  <div class="table-loading">
+                    <div class="spinner"></div>
+                    <span>Cargando usuarios...</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Cards Mobile -->
+        <div class="lista-usuarios-mobile" id="listaUsuariosMobile">
+          <!-- Se llena dinámicamente -->
+        </div>
+
+        <!-- Estado vacío usuarios -->
+        <div id="emptyStateUsuarios" class="empty-state" style="display: none;">
+          <div class="empty-icon">👤</div>
+          <h3>No hay usuarios</h3>
+          <p>No se encontraron usuarios con los criterios de búsqueda</p>
+        </div>
+
+      </section>
+
+    </main>
+  </div>
+  
+  <!-- ================================================
+       MODAL DETALLE DE PEDIDO
+  ================================================= -->
+  <div id="modalDetalle" class="modal">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h2>📦 Pedido <span id="modalIdPedido">#---</span></h2>
+          <span class="modal-badge" id="modalEstadoBadge">Estado</span>
+        </div>
+        <button class="btn-close" onclick="cerrarModalDetalle()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="modal-body">
+        <!-- Info del Cliente -->
+        <div class="detail-section">
+          <h4>👤 Información del Cliente</h4>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span class="detail-label">Nombre</span>
+              <span class="detail-value" id="modalClienteNombre">-</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Teléfono</span>
+              <span class="detail-value" id="modalClienteTelefono">-</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Email</span>
+              <span class="detail-value" id="modalClienteEmail">-</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Tipo Entrega</span>
+              <span class="detail-value" id="modalTipoEntrega">-</span>
+            </div>
+          </div>
+          
+          <div class="detail-item full-width" id="direccionContainer">
+            <span class="detail-label">📍 Dirección de Entrega</span>
+            <span class="detail-value" id="modalDireccion">-</span>
+          </div>
+        </div>
+        
+        <!-- Items del Pedido -->
+        <div class="detail-section">
+          <h4>🍽️ Productos del Pedido</h4>
+          <div class="items-list" id="modalItemsList">
+            <!-- Se llena dinámicamente -->
+          </div>
+        </div>
+        
+        <!-- Notas -->
+        <div class="detail-section" id="notasContainer">
+          <h4>📝 Notas</h4>
+          <div class="notas-content" id="modalNotas">
+            Sin notas adicionales
+          </div>
+        </div>
+        
+        <!-- Totales -->
+        <div class="detail-section totals-section">
+          <div class="total-row">
+            <span>Subtotal</span>
+            <span id="modalSubtotal">$0</span>
+          </div>
+          <div class="total-row">
+            <span>Descuento</span>
+            <span id="modalDescuento">-$0</span>
+          </div>
+          <div class="total-row total-final">
+            <span>Total</span>
+            <span id="modalTotal">$0</span>
+          </div>
+          <div class="total-row payment-method">
+            <span>💳 Método de Pago</span>
+            <span id="modalMetodoPago">-</span>
+          </div>
+        </div>
+        
+        <!-- Zona de Acciones de Estado -->
+        <div class="detail-section action-section" id="accionesEstado">
+          <h4>⚡ Cambiar Estado del Pedido</h4>
+          
+          <div class="action-buttons" id="botonesAccion">
+            <!-- Se llenan dinámicamente según el estado actual -->
+          </div>
+          
+          <!-- Formulario de Cancelación (oculto por defecto) -->
+          <div id="cancelacionForm" class="cancelacion-form" style="display: none;">
+            <label for="motivoCancelacion">⚠️ Motivo de Cancelación (obligatorio)</label>
+            <textarea id="motivoCancelacion" rows="3" placeholder="Escriba el motivo de la cancelación..."></textarea>
+            <div class="cancelacion-actions">
+              <button class="btn-cancel-action" onclick="ocultarFormCancelacion()">Volver</button>
+              <button class="btn-confirm-cancel" onclick="confirmarCancelacion()">Confirmar Cancelación</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="cerrarModalDetalle()">Cerrar</button>
+        <button class="btn-print" onclick="imprimirComanda()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 6 2 18 2 18 9"/>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+            <rect x="6" y="14" width="12" height="8"/>
+          </svg>
+          Imprimir Comanda
+        </button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ================================================
+       FASE 9.2: MODAL CREAR/EDITAR USUARIO
+  ================================================= -->
+  <div id="modalUsuario" class="modal">
+    <div class="modal-content modal-usuario">
+      <div class="modal-header">
+        <div class="modal-title">
+          <h2 id="modalUsuarioTitulo">➕ Nuevo Usuario</h2>
+        </div>
+        <button class="btn-close" onclick="cerrarModalUsuario()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <form id="formUsuario" onsubmit="return false;">
+
+          <!-- Nombre -->
+          <div class="form-group-usuario">
+            <label for="inputNombreUsuario">👤 Nombre completo <span class="required">*</span></label>
+            <input type="text" id="inputNombreUsuario" placeholder="Ej: Juan Pérez" maxlength="100" required>
+          </div>
+
+          <!-- Rol -->
+          <div class="form-group-usuario">
+            <label for="selectRolUsuario">🎭 Rol <span class="required">*</span></label>
+            <select id="selectRolUsuario" required onchange="actualizarCamposSegunRol()">
+              <option value="">-- Seleccionar rol --</option>
+              <option value="Administrador">👑 Administrador</option>
+              <option value="Mesero">🧑‍🍳 Mesero</option>
+              <option value="Cocina">🍳 Cocina</option>
+              <option value="Domiciliario">🛵 Domiciliario</option>
+            </select>
+            <span class="hint-text" id="hintRol">El rol determina los permisos y método de acceso</span>
+          </div>
+
+          <!-- Email (dinámico) -->
+          <div class="form-group-usuario" id="campoEmailUsuario">
+            <label for="inputEmailUsuario">📧 Correo electrónico <span class="required">*</span></label>
+            <input type="email" id="inputEmailUsuario" placeholder="correo@empresa.com" maxlength="100">
+            <span class="hint-text">Se usará para iniciar sesión en el Dashboard</span>
+          </div>
+
+          <!-- Credencial (dinámico: PIN o Password) -->
+          <div class="form-group-usuario" id="campoCredencialUsuario">
+            <label for="inputCredencialUsuario" id="labelCredencialUsuario">🔐 Contraseña <span class="required" id="reqCredencial">*</span></label>
+            <div class="input-credencial-wrapper">
+              <input type="password" id="inputCredencialUsuario" placeholder="••••••••" maxlength="50">
+              <button type="button" class="btn-toggle-password" onclick="togglePasswordVisibility()">
+                <svg id="iconShowPass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <svg id="iconHidePass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              </button>
+            </div>
+            <span class="hint-text" id="hintCredencial">Mínimo 4 caracteres</span>
+          </div>
+
+          <!-- Teléfono -->
+          <div class="form-group-usuario">
+            <label for="inputTelefonoUsuario">📱 Teléfono</label>
+            <input type="tel" id="inputTelefonoUsuario" placeholder="3001234567" maxlength="15" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <span class="hint-text">Solo números, mínimo 7 dígitos</span>
+          </div>
+
+          <!-- Estado Activo -->
+          <div class="form-group-usuario checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="checkActivoUsuario" checked>
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-text">✅ Usuario activo</span>
+            </label>
+            <span class="hint-text">Los usuarios inactivos no pueden iniciar sesión</span>
+          </div>
+
+          <!-- Mensaje de error -->
+          <div id="errorFormUsuario" class="error-form-usuario" style="display: none;"></div>
+
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cerrarModalUsuario()">Cancelar</button>
+        <button type="button" class="btn-primary-usuario" onclick="guardarUsuario()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span id="btnGuardarUsuarioText">Guardar Usuario</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================
+       MODAL CONFIRMAR ELIMINACIÓN USUARIO
+  ================================================= -->
+  <div id="modalConfirmarEliminar" class="modal">
+    <div class="modal-content modal-sm">
+      <div class="modal-header modal-header-danger">
+        <div class="modal-title">
+          <h2>⚠️ Confirmar Desactivación</h2>
+        </div>
+        <button class="btn-close" onclick="cerrarModalConfirmarEliminar()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message">¿Está seguro que desea desactivar al usuario <strong id="nombreUsuarioEliminar">-</strong>?</p>
+        <p class="confirm-note">El usuario no será eliminado permanentemente, solo se marcará como inactivo y no podrá iniciar sesión.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="cerrarModalConfirmarEliminar()">Cancelar</button>
+        <button type="button" class="btn-danger" onclick="confirmarEliminarUsuario()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Desactivar Usuario
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================
+       OVERLAY DE CARGA
+  ================================================= -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-content">
+      <div class="spinner-large"></div>
+      <p>Procesando...</p>
+    </div>
+  </div>
+  
+  <!-- ================================================
+       TOAST DE NOTIFICACIONES
+  ================================================= -->
+  <div id="toastContainer" class="toast-container"></div>
+  
+  <?!= include('JS-Dashboard'); ?>
+</body>
+</html>
