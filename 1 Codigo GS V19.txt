@@ -2864,7 +2864,10 @@ function _adminGuardarCliente(sheet, datos, usuarioSolicitante) {
     var domicilio = String(datos.domicilio || '').trim();
     var email = String(datos.email || '').trim().toLowerCase();
     var notas = String(datos.notas || '').trim();
-    var idActual = datos.id ? String(datos.id).trim() : null;
+    // Aceptar tanto 'id' como 'idActual' para compatibilidad con frontend
+    var idActual = datos.id ? String(datos.id).trim() : (datos.idActual ? String(datos.idActual).trim() : null);
+
+    Logger.log('[ADMIN] Guardando cliente - ID actual: ' + idActual + ', Celular: ' + celular);
 
     // Validaciones
     if (!nombre || nombre.length < 2) {
@@ -2882,9 +2885,12 @@ function _adminGuardarCliente(sheet, datos, usuarioSolicitante) {
       var idExistente = String(data[i][0] || '').trim();
 
       if (celularExistente === celular && idExistente !== idActual) {
-        return { success: false, error: 'El celular "' + celular + '" ya esta registrado' };
+        Logger.log('[ADMIN] Celular duplicado detectado: ' + celular + ' pertenece a ID: ' + idExistente);
+        return { success: false, error: 'El celular "' + celular + '" ya esta registrado en otro cliente' };
       }
     }
+
+    Logger.log('[ADMIN] Validación de celular OK: ' + celular);
 
     if (idActual) {
       // ACTUALIZAR cliente existente
@@ -2954,9 +2960,15 @@ function _adminGuardarCliente(sheet, datos, usuarioSolicitante) {
  */
 function _adminEliminarCliente(sheet, datos, usuarioSolicitante) {
   try {
-    var idEliminar = datos.id ? String(datos.id).trim() : null;
+    Logger.log('[ADMIN] Intentando eliminar cliente - Datos recibidos: ' + JSON.stringify(datos));
+
+    // Aceptar tanto 'id' como 'idActual' para compatibilidad con frontend
+    var idEliminar = datos.id ? String(datos.id).trim() : (datos.idActual ? String(datos.idActual).trim() : null);
+
+    Logger.log('[ADMIN] ID a eliminar: ' + idEliminar);
 
     if (!idEliminar) {
+      Logger.log('[ADMIN] ERROR: No se recibió ID de cliente');
       return { success: false, error: 'ID de cliente requerido para eliminar' };
     }
 
@@ -2968,11 +2980,13 @@ function _adminEliminarCliente(sheet, datos, usuarioSolicitante) {
       if (String(data[i][0]).trim() === idEliminar) {
         filaEliminar = i + 1;
         nombreCliente = String(data[i][1] || 'Cliente');
+        Logger.log('[ADMIN] Cliente encontrado en fila: ' + filaEliminar + ' - Nombre: ' + nombreCliente);
         break;
       }
     }
 
     if (filaEliminar === -1) {
+      Logger.log('[ADMIN] ERROR: Cliente no encontrado con ID: ' + idEliminar);
       return { success: false, error: 'Cliente con ID "' + idEliminar + '" no encontrado' };
     }
 
