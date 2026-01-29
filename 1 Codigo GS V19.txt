@@ -1814,34 +1814,69 @@ function buscarClienteDomicilio(termino) {
 function guardarClienteDomicilio(datos) {
   try {
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
-    var sheet = ss.getSheetByName('Clientes');
-    
+    var sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+
     if (!sheet) {
-      sheet = ss.insertSheet('Clientes');
-      sheet.getRange(1, 1, 1, 6).setValues([['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro']]);
+      sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
+      // FIX Fase 9.5: Headers completos con 10 columnas
+      var headers = ['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro', 'Email', 'Password', 'Rol', 'Activo'];
+      sheet.getRange(1, 1, 1, 10).setValues([headers]);
       sheet.setFrozenRows(1);
     }
-    
-    const celular = String(datos.celular || '').trim();
-    if (!celular) return;
-    
+
+    const celular = String(datos.celular || '').replace(/\D/g, '').trim();
+    if (!celular) {
+      Logger.log('[DOMICILIO] Error: Celular vacío');
+      return { success: false, error: 'Celular requerido' };
+    }
+
     const data = sheet.getDataRange().getValues();
-    
+
+    // Buscar si el cliente ya existe por celular
     for (var i = 1; i < data.length; i++) {
-      if (String(data[i][2]).trim() === celular) {
+      if (String(data[i][2]).replace(/\D/g, '').trim() === celular) {
         var fila = i + 1;
+        // Actualizar datos existentes
         if (datos.nombre) sheet.getRange(fila, 2).setValue(datos.nombre);
         if (datos.direccion) sheet.getRange(fila, 4).setValue(datos.direccion);
         if (datos.notas) sheet.getRange(fila, 5).setValue(datos.notas);
-        return;
+        Logger.log('[DOMICILIO] Cliente actualizado: ' + celular);
+        return { success: true, celular: celular, id: data[i][0], accion: 'actualizado' };
       }
     }
-    
+
+    // CREAR nuevo cliente con 10 columnas
     var idCliente = 'CLI-DOM-' + String(sheet.getLastRow()).padStart(4, '0');
-    sheet.appendRow([idCliente, datos.nombre || '', celular, datos.direccion || '', datos.notas || '', obtenerTimestampColombia()]);
-    
+    var fechaRegistro = obtenerTimestampColombia();
+
+    // FIX Fase 9.5: Array con 10 elementos - incluye Activo = true
+    var nuevaFila = [
+      idCliente,                    // 0: ID_Key_Clientes
+      datos.nombre || '',           // 1: Nombre_Completo
+      celular,                      // 2: Celular
+      datos.direccion || '',        // 3: Domicilio
+      datos.notas || '',            // 4: Notas_Adicionales
+      fechaRegistro,                // 5: Fecha_Registro
+      datos.email || '',            // 6: Email
+      '',                           // 7: Password (vacío para domicilios)
+      'Cliente',                    // 8: Rol
+      true                          // 9: Activo ← FIX CRÍTICO
+    ];
+
+    Logger.log('[DOMICILIO] Guardando cliente - Array longitud: ' + nuevaFila.length);
+    Logger.log('[DOMICILIO] Valor Activo: ' + nuevaFila[9] + ' (tipo: ' + typeof nuevaFila[9] + ')');
+
+    sheet.appendRow(nuevaFila);
+    SpreadsheetApp.flush();
+
+    Logger.log('[DOMICILIO] ✅ Cliente creado: ' + idCliente + ' | Celular: ' + celular);
+
+    // Retornar celular para compatibilidad con PEDIDOS
+    return { success: true, celular: celular, id: idCliente, nombre: datos.nombre, accion: 'creado' };
+
   } catch (error) {
-    Logger.log('Error guardando cliente: ' + error.toString());
+    Logger.log('[DOMICILIO] ❌ Error guardando cliente: ' + error.toString());
+    return { success: false, error: error.toString() };
   }
 }
 
@@ -2044,28 +2079,46 @@ function obtenerOCrearClienteGenerico() {
   try {
     const ID_CLIENTE_GENERICO = '2222222';
     const NOMBRE_CLIENTE_GENERICO = 'CONSUMIDOR FINAL';
-    
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     let sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
-    
+
     if (!sheet) {
       sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
-      sheet.getRange(1, 1, 1, 6).setValues([['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro']]);
+      // FIX Fase 9.5: Headers completos con 10 columnas
+      var headers = ['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro', 'Email', 'Password', 'Rol', 'Activo'];
+      sheet.getRange(1, 1, 1, 10).setValues([headers]);
       sheet.setFrozenRows(1);
     }
-    
+
     const data = sheet.getDataRange().getValues();
-    
+
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === ID_CLIENTE_GENERICO) {
         return ID_CLIENTE_GENERICO;
       }
     }
-    
+
+    // FIX Fase 9.5: Array con 10 elementos - incluye Activo = true
     const timestamp = obtenerTimestampColombia();
-    sheet.appendRow([ID_CLIENTE_GENERICO, NOMBRE_CLIENTE_GENERICO, '0000000000', 'Local', 'Cliente genérico', timestamp]);
+    var nuevaFila = [
+      ID_CLIENTE_GENERICO,          // 0: ID_Key_Clientes
+      NOMBRE_CLIENTE_GENERICO,      // 1: Nombre_Completo
+      '0000000000',                 // 2: Celular
+      'Local',                      // 3: Domicilio
+      'Cliente genérico del sistema', // 4: Notas_Adicionales
+      timestamp,                    // 5: Fecha_Registro
+      '',                           // 6: Email
+      '',                           // 7: Password
+      'Sistema',                    // 8: Rol
+      true                          // 9: Activo
+    ];
+    sheet.appendRow(nuevaFila);
+
+    Logger.log('[SISTEMA] ✅ Cliente genérico creado con Activo=true');
     return ID_CLIENTE_GENERICO;
   } catch (error) {
+    Logger.log('[SISTEMA] Error en obtenerOCrearClienteGenerico: ' + error.toString());
     return '2222222';
   }
 }
@@ -2167,31 +2220,22 @@ function buscarOcrearClienteUnificado(datosCliente) {
     const timestamp = obtenerTimestampColombia();
     const idCliente = celularLimpio;
     
-    if (tieneColumnaEmail) {
-      const newRow = [
-        idCliente,
-        datosCliente.nombre || '',
-        celularLimpio,
-        datosCliente.direccion || '',
-        datosCliente.notas || '',
-        timestamp,
-        datosCliente.email ? datosCliente.email.trim().toLowerCase() : '',
-        datosCliente.password || '',
-        'Cliente',
-        true
-      ];
-      sheet.appendRow(newRow);
-    } else {
-      const newRow = [
-        idCliente,
-        datosCliente.nombre || '',
-        celularLimpio,
-        datosCliente.direccion || '',
-        datosCliente.notas || '',
-        timestamp
-      ];
-      sheet.appendRow(newRow);
-    }
+    // FIX Fase 9.5: Siempre crear con 10 columnas incluyendo Activo = true
+    const newRow = [
+      idCliente,                                                    // 0: ID_Key_Clientes
+      datosCliente.nombre || '',                                    // 1: Nombre_Completo
+      celularLimpio,                                                // 2: Celular
+      datosCliente.direccion || '',                                 // 3: Domicilio
+      datosCliente.notas || '',                                     // 4: Notas_Adicionales
+      timestamp,                                                    // 5: Fecha_Registro
+      datosCliente.email ? datosCliente.email.trim().toLowerCase() : '', // 6: Email
+      datosCliente.password || '',                                  // 7: Password
+      'Cliente',                                                    // 8: Rol
+      true                                                          // 9: Activo ← FIX CRÍTICO
+    ];
+
+    Logger.log('[V16] Guardando cliente - Array longitud: ' + newRow.length + ' | Activo: ' + newRow[9]);
+    sheet.appendRow(newRow);
     
     Logger.log('V16 Cliente nuevo creado: ' + idCliente);
     return idCliente;
