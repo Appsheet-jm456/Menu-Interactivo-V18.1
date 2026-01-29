@@ -22,57 +22,161 @@ const ESTADOS_DISPONIBLES = ['Solicitado', 'Recibido', 'Enviado', 'Entregado'];
 
 // ============================================
 // FASE 8.3: FUNCIONES MAPPER DE CLIENTES
+// FASE 9.5: Búsqueda inteligente mejorada
 // ============================================
 
 /**
- * Obtener nombre de cliente desde el cache
+ * Normaliza un número de celular quitando caracteres no numéricos
+ * @param {string|number} celular - Celular a normalizar
+ * @returns {string} Celular solo con dígitos
+ */
+function normalizarCelular(celular) {
+  if (!celular) return '';
+  return String(celular).replace(/\D/g, '').trim();
+}
+
+/**
+ * Formatea un número de celular para mostrar (300 123 4567)
+ * @param {string|number} celular - Celular a formatear
+ * @returns {string} Celular formateado o 'N/A'
+ */
+function formatearCelular(celular) {
+  if (!celular) return 'N/A';
+  const limpio = normalizarCelular(celular);
+  if (limpio.length === 10) {
+    return limpio.replace(/(\d{3})(\d{3})(\d{4})/, '$1 $2 $3');
+  }
+  return limpio || 'N/A';
+}
+
+/**
+ * Búsqueda inteligente de cliente por ID o Celular (con normalización)
+ * @param {string} idCliente - ID (CLI-DOM-XXX) o Celular del pedido
+ * @param {Array} listaClientes - Array de clientes (usa clientesCache si no se pasa)
+ * @returns {Object|null} Cliente encontrado o null
+ */
+function buscarClienteInteligente(idCliente, listaClientes) {
+  const lista = listaClientes || clientesCache;
+
+  // Validación defensiva
+  if (!lista || lista.length === 0 || !idCliente) {
+    return null;
+  }
+
+  const idStr = String(idCliente).trim();
+  const celularNormalizado = normalizarCelular(idCliente);
+
+  // Búsqueda: 1) Por ID exacto, 2) Por celular normalizado
+  const cliente = lista.find(function(c) {
+    // Comparar por ID exacto
+    if (String(c.id || '').trim() === idStr) return true;
+    // Comparar por celular normalizado
+    if (celularNormalizado && normalizarCelular(c.celular) === celularNormalizado) return true;
+    return false;
+  });
+
+  return cliente || null;
+}
+
+/**
+ * Obtener nombre de cliente desde el cache (MEJORADO FASE 9.5)
  * @param {string} idCliente - ID o celular del cliente
  * @returns {string} Nombre del cliente o texto por defecto
  */
 function obtenerNombreCliente(idCliente) {
   if (!idCliente) return 'Sin identificar';
   const idStr = String(idCliente).trim();
-  
+
   // Cliente genérico
   if (idStr === '2222222') return 'Consumidor Final';
-  
-  // Buscar en cache
-  const cliente = clientesCache.find(function(c) {
-    return String(c.id).trim() === idStr || String(c.celular).trim() === idStr;
-  });
-  
+
+  // Búsqueda inteligente con normalización
+  const cliente = buscarClienteInteligente(idCliente, clientesCache);
+
   if (cliente && cliente.nombre) return cliente.nombre;
+
+  // Si no se encontró, mostrar celular formateado en lugar de "Cliente Nuevo"
+  const celularLimpio = normalizarCelular(idCliente);
+  if (celularLimpio.length >= 7) {
+    return 'Cliente: ' + formatearCelular(celularLimpio);
+  }
+
   return 'Cliente Nuevo';
 }
 
 /**
- * Obtener datos completos del cliente desde el cache
+ * Obtener datos completos del cliente desde el cache (MEJORADO FASE 9.5)
  * @param {string} idCliente - ID o celular del cliente
  * @returns {Object} Objeto con nombre, celular y email
  */
 function obtenerDatosClienteLocal(idCliente) {
   if (!idCliente) return { nombre: 'Sin identificar', celular: '-', email: '-' };
   const idStr = String(idCliente).trim();
-  
+
   // Cliente genérico
   if (idStr === '2222222') {
-    return { nombre: 'Consumidor Final', celular: '-', email: '-' };
+    return { nombre: 'Consumidor Final', celular: '-', email: '-', esGenerico: true };
   }
-  
-  // Buscar en cache
-  const cliente = clientesCache.find(function(c) {
-    return String(c.id).trim() === idStr || String(c.celular).trim() === idStr;
-  });
-  
+
+  // Búsqueda inteligente con normalización
+  const cliente = buscarClienteInteligente(idCliente, clientesCache);
+
   if (cliente) {
     return {
       nombre: cliente.nombre || 'Sin nombre',
       celular: cliente.celular || '-',
-      email: cliente.email || '-'
+      email: cliente.email || '-',
+      id: cliente.id,
+      encontrado: true
     };
   }
-  
-  return { nombre: 'Cliente Nuevo', celular: idStr, email: '-' };
+
+  // No encontrado - devolver datos del pedido
+  const celularLimpio = normalizarCelular(idStr);
+  return {
+    nombre: 'Cliente Nuevo',
+    celular: celularLimpio || idStr,
+    email: '-',
+    encontrado: false
+  };
+}
+
+/**
+ * Renderiza HTML formateado para mostrar información del cliente en tabla
+ * @param {string} idCliente - ID del cliente del pedido
+ * @param {string} telefonoContacto - Teléfono de contacto del pedido (fallback)
+ * @returns {string} HTML string para insertar en la tabla
+ */
+function renderizarInfoCliente(idCliente, telefonoContacto) {
+  const datos = obtenerDatosClienteLocal(idCliente);
+
+  // Caso especial: Consumidor Final
+  if (datos.esGenerico) {
+    return '<div class="cliente-info cliente-generico">' +
+           '<span class="badge-cliente-generico">👤 Consumidor Final</span>' +
+           '</div>';
+  }
+
+  // Determinar celular a mostrar
+  let celularMostrar = datos.celular;
+  if (celularMostrar === '-' && telefonoContacto) {
+    celularMostrar = telefonoContacto;
+  }
+  const celularFormateado = formatearCelular(celularMostrar);
+
+  // Cliente encontrado en base de datos
+  if (datos.encontrado) {
+    return '<div class="cliente-info cliente-registrado">' +
+           '<strong class="cliente-nombre">' + datos.nombre + '</strong>' +
+           '<small class="cliente-celular">📱 ' + celularFormateado + '</small>' +
+           '</div>';
+  }
+
+  // Cliente no encontrado (mostrar datos del pedido)
+  return '<div class="cliente-info cliente-nuevo">' +
+         '<span class="cliente-nombre-nuevo">🆕 ' + datos.nombre + '</span>' +
+         '<small class="cliente-celular">📱 ' + celularFormateado + '</small>' +
+         '</div>';
 }
 
 /**
@@ -486,18 +590,15 @@ function renderizarTablaPedidos() {
     const badgeEtapa = obtenerBadgeEtapa(pedido.estadoLogistico);
     const badgeEstado = obtenerBadgeEstado(pedido.estadoCierre);
     
-    // FASE 8.3: Usar mapper para nombre de cliente
-    const nombreCliente = obtenerNombreCliente(pedido.idCliente);
-    
+    // FASE 9.5: Renderizado mejorado de información del cliente
+    const infoClienteHTML = renderizarInfoCliente(pedido.idCliente, pedido.telefonoCliente || pedido.telefonoContacto);
+
     html += '<tr>';
     html += '<td data-label="ID">';
     html += '<strong>' + pedido.idPedido + '</strong>';
     html += '<span style="margin-left: 8px;">' + badgeEtapa.replace('class="badge ', 'class="badge ') + '</span>';
     html += '</td>';
-    html += '<td data-label="Cliente">';
-    html += '<div style="font-weight: 500;">' + nombreCliente + '</div>';
-    html += '<div style="font-size: 12px; color: var(--text-secondary);">' + (pedido.telefonoCliente || pedido.telefonoContacto || '-') + '</div>';
-    html += '</td>';
+    html += '<td data-label="Cliente">' + infoClienteHTML + '</td>';
     html += '<td data-label="Fecha">';
     html += '<div>' + fechaFormateada + '</div>';
     html += '<div style="font-size: 12px; color: var(--text-secondary);">' + horaFormateada + '</div>';

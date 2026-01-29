@@ -315,6 +315,25 @@ body {
 .badge-cancelado { background: var(--danger-light); color: var(--danger); }
 .badge-abierto { background: var(--success-light); color: var(--success); }
 .badge-cerrado { background: #DBEAFE; color: #1D4ED8; }
+
+/* FASE 9.5: Estilos para información de cliente en tabla */
+.cliente-info {
+  display: flex; flex-direction: column; gap: 2px; line-height: 1.4;
+}
+.cliente-info strong, .cliente-nombre {
+  color: var(--text-primary); font-size: 13px; font-weight: 600;
+}
+.cliente-info small, .cliente-celular {
+  color: var(--text-secondary); font-size: 11px; display: block;
+}
+.cliente-registrado .cliente-nombre { color: #2c3e50; }
+.cliente-nuevo .cliente-nombre-nuevo { color: #6c757d; font-weight: 500; font-size: 12px; }
+.badge-cliente-generico {
+  display: inline-block; background: #f3f4f6; color: #6b7280;
+  font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 500;
+}
+.cliente-generico { padding: 4px 0; }
+
 .btn-view {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 14px; background: var(--primary); color: white;
