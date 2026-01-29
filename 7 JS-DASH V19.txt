@@ -59,7 +59,12 @@ function buscarClienteInteligente(idCliente, listaClientes) {
   const lista = listaClientes || clientesCache;
 
   // Validación defensiva
-  if (!lista || lista.length === 0 || !idCliente) {
+  if (!lista || lista.length === 0) {
+    console.log('[BUSQUEDA] Lista de clientes vacía o no disponible');
+    return null;
+  }
+
+  if (!idCliente) {
     return null;
   }
 
@@ -67,15 +72,27 @@ function buscarClienteInteligente(idCliente, listaClientes) {
   const celularNormalizado = normalizarCelular(idCliente);
 
   // Búsqueda: 1) Por ID exacto, 2) Por celular normalizado
-  const cliente = lista.find(function(c) {
-    // Comparar por ID exacto
-    if (String(c.id || '').trim() === idStr) return true;
-    // Comparar por celular normalizado
-    if (celularNormalizado && normalizarCelular(c.celular) === celularNormalizado) return true;
-    return false;
-  });
+  var clienteEncontrado = null;
 
-  return cliente || null;
+  for (var i = 0; i < lista.length; i++) {
+    var c = lista[i];
+    var idClienteLista = String(c.id || '').trim();
+    var celularClienteLista = normalizarCelular(c.celular);
+
+    // Comparar por ID exacto
+    if (idClienteLista === idStr) {
+      clienteEncontrado = c;
+      break;
+    }
+
+    // Comparar por celular normalizado
+    if (celularNormalizado && celularClienteLista === celularNormalizado) {
+      clienteEncontrado = c;
+      break;
+    }
+  }
+
+  return clienteEncontrado;
 }
 
 /**
@@ -508,10 +525,16 @@ function cargarDatosDashboard() {
       
       if (result.success) {
         pedidosCache = result.pedidos;
-        // FASE 8.3: Cargar lista de clientes
-        if (result.clientes) {
+        // FASE 9.5: Cargar lista de clientes desde backend
+        if (result.clientes && result.clientes.length > 0) {
           clientesCache = result.clientes;
           console.log('✅ Clientes cargados:', clientesCache.length);
+          // Debug: Mostrar primer cliente para verificar estructura
+          if (clientesCache.length > 0) {
+            console.log('📋 Ejemplo cliente:', JSON.stringify(clientesCache[0]));
+          }
+        } else {
+          console.warn('⚠️ No se recibieron clientes del backend');
         }
         renderizarTablaPedidos();
         actualizarEstadisticas();

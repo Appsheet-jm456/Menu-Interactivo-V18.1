@@ -565,11 +565,34 @@ function obtenerPedidosDashboard(filtros) {
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
     const sheetUsuarios = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
-    
-    if (!sheetPedidos) return { success: false, message: 'Hoja de Pedidos no encontrada', pedidos: [] };
-    
+    const sheetClientes = ss.getSheetByName(CONFIG.SHEETS.CLIENTES); // FASE 9.5: Cargar clientes
+
+    if (!sheetPedidos) return { success: false, message: 'Hoja de Pedidos no encontrada', pedidos: [], clientes: [] };
+
     const dataPedidos = sheetPedidos.getDataRange().getValues();
     const dataUsuarios = sheetUsuarios ? sheetUsuarios.getDataRange().getValues() : [];
+    const dataClientes = sheetClientes ? sheetClientes.getDataRange().getValues() : []; // FASE 9.5
+
+    // FASE 9.5: Crear lista de clientes para enviar al frontend
+    const clientesLista = [];
+    if (dataClientes.length > 1) {
+      for (var c = 1; c < dataClientes.length; c++) {
+        var filaCliente = dataClientes[c];
+        var activo = filaCliente[9];
+        // Solo incluir clientes activos
+        if (activo !== false && activo !== 'FALSE' && activo !== 'false') {
+          clientesLista.push({
+            id: String(filaCliente[0] || '').trim(),       // ID_Key_Clientes
+            nombre: String(filaCliente[1] || '').trim(),   // Nombre_Completo
+            celular: String(filaCliente[2] || '').replace(/\D/g, '').trim(), // Celular normalizado
+            domicilio: String(filaCliente[3] || '').trim(),// Domicilio
+            email: String(filaCliente[6] || '').trim(),    // Email
+            rol: String(filaCliente[8] || 'Cliente').trim()// Rol
+          });
+        }
+      }
+      Logger.log('[DASHBOARD] Clientes activos cargados: ' + clientesLista.length);
+    }
     
     const headers = dataPedidos[0];
     const tieneNuevaEstructura = headers.length >= 16 && (String(headers[2]).toLowerCase().includes('marca') || String(headers[3]).toLowerCase().includes('fecha'));
@@ -680,7 +703,8 @@ function obtenerPedidosDashboard(filtros) {
     
     pedidos.sort((a, b) => new Date(b.fechaPedido) - new Date(a.fechaPedido));
     Logger.log('Total pedidos encontrados: ' + pedidos.length);
-    return { success: true, pedidos: pedidos, total: pedidos.length };
+    // FASE 9.5: Incluir lista de clientes en la respuesta
+    return { success: true, pedidos: pedidos, total: pedidos.length, clientes: clientesLista };
   } catch (error) {
     Logger.log('ERROR en obtenerPedidosDashboard: ' + error.toString());
     Logger.log('Stack: ' + error.stack);
