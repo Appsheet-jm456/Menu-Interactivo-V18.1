@@ -305,6 +305,8 @@ function confirmarAbrirMesa() {
           mesas[i].idPedidoActivo=r.idPedido;
           mesas[i].horaOcupacion=new Date().toISOString();
           mesas[i].totalConsumo=0;
+          // V21 FIX: Actualizar meseroAsignado localmente para visualización inmediata
+          mesas[i].meseroAsignado = usuarioMesero.nombre;
           mesaSeleccionada=mesas[i];
           break;
         }
