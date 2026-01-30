@@ -305,6 +305,8 @@ function confirmarAbrirMesa() {
           mesas[i].idPedidoActivo=r.idPedido;
           mesas[i].horaOcupacion=new Date().toISOString();
           mesas[i].totalConsumo=0;
+          // V21 FIX: Actualizar meseroAsignado localmente para visualización inmediata
+          mesas[i].meseroAsignado = usuarioMesero.nombre;
           mesaSeleccionada=mesas[i];
           break;
         }
@@ -528,6 +530,28 @@ function cargarItemsMesa() {
 
         // Insertar nuevo badge antes del contenedor de totales
         totalesContainer.insertAdjacentHTML('beforebegin', badgeHTML);
+
+        // V21 SECURITY: Mostrar mesero responsable de la mesa
+        var infoMeseroViejo = document.getElementById('infoMeseroResponsable');
+        if(infoMeseroViejo) infoMeseroViejo.remove();
+
+        var meseroResponsable = mesaSeleccionada.meseroAsignado || mesaSeleccionada.Mesero_Asignado || 'Sin Asignar';
+        var infoMeseroHTML = '<div id="infoMeseroResponsable" class="info-mesero" style="' +
+          'margin-top: 8px;' +
+          'padding: 6px 12px;' +
+          'background: #f0f9ff;' +
+          'border-left: 3px solid #3b82f6;' +
+          'font-size: 13px;' +
+          'border-radius: 4px;' +
+          '">' +
+          '💁‍♂️ <strong>Atendido por:</strong> <span id="mesero-responsable">' + meseroResponsable + '</span>' +
+          '</div>';
+
+        // Insertar info mesero después del badge
+        var badgeInsertado = document.getElementById('badgeEstadoPedido');
+        if(badgeInsertado) {
+          badgeInsertado.insertAdjacentHTML('afterend', infoMeseroHTML);
+        }
       }
 
       // V18.1 SYNC: Guardar estado inicial para detectar cambios futuros
@@ -837,13 +861,64 @@ function cerrarModalPOS() {
 }
 
 // ============================================
-// COBRAR MESA - V18 FIX CONCURRENCIA
+// COBRAR MESA - V21 SECURITY + V18 FIX CONCURRENCIA
 // ============================================
 function cobrarMesa() {
   if(!mesaSeleccionada) {
     mostrarToast('error', 'Error', 'No hay mesa seleccionada');
     return;
   }
+
+  // ========================================
+  // 🔒 SECURITY GUARD V21: Validación de Propiedad de Mesa
+  // Solo el mesero que abrió la mesa o Admin puede cerrarla
+  // ========================================
+  var meseroResponsable = mesaSeleccionada.meseroAsignado || mesaSeleccionada.Mesero_Asignado || '';
+  var usuarioNombre = usuarioMesero ? usuarioMesero.nombre : '';
+  var usuarioRol = usuarioMesero ? usuarioMesero.rol : '';
+
+  // Validación Estricta: Solo el dueño o Admin puede cerrar
+  var esAdministrador = (usuarioRol === 'Administrador' || usuarioRol === 'SuperAdmin' || usuarioRol === 'Admin');
+  var esDuenoMesa = (usuarioNombre === meseroResponsable);
+
+  // Caso failsafe: Si meseroResponsable es vacío/null, permitir cierre (datos incompletos)
+  var esMeseroDatosIncompletos = (!meseroResponsable || meseroResponsable.trim() === '' || meseroResponsable === 'Sin Asignar');
+
+  console.log('Security Guard V21:', {
+    meseroResponsable: meseroResponsable,
+    usuarioNombre: usuarioNombre,
+    usuarioRol: usuarioRol,
+    esAdmin: esAdministrador,
+    esDueno: esDuenoMesa,
+    datosIncompletos: esMeseroDatosIncompletos
+  });
+
+  if (!esAdministrador && !esDuenoMesa && !esMeseroDatosIncompletos) {
+    // Usar SweetAlert si está disponible, sino alert nativo
+    if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        icon: 'warning',
+        title: '⛔ ACCESO DENEGADO',
+        html: '<p>Esta mesa está asignada a:</p>' +
+              '<p style="font-size: 18px; font-weight: bold; color: #dc2626;">' +
+              meseroResponsable +
+              '</p>' +
+              '<p style="margin-top: 12px; color: #64748b;">' +
+              'Solo el mesero responsable o un Administrador pueden cerrar esta mesa.' +
+              '</p>',
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#3b82f6'
+      });
+    } else {
+      // Fallback a toast nativo si Swal no está disponible
+      mostrarToast('error', 'Acceso Denegado',
+        'Esta mesa pertenece a ' + meseroResponsable + '. Solo el mesero responsable o un Administrador pueden cerrarla.');
+    }
+    return; // DETENER EJECUCIÓN COMPLETAMENTE
+  }
+  // ========================================
+  // ✅ FIN SECURITY GUARD - Usuario autorizado
+  // ========================================
 
   // ========================================
   // FIX V18: Guardar datos en pedidoActivo ANTES de abrir modal
@@ -1235,9 +1310,14 @@ function confirmarPago() {
         console.error('Error de conexion:', error);
         mostrarToast('error', 'Error de conexion', 'No se pudo conectar');
       })
+      // ========================================
+      // FASE 11 FIX: Diferenciación Domicilio vs Rápido
+      // DOMICILIO: NO cerrar → Mantiene 'Solicitado' + 'Abierto' para flujo GIP
+      // RAPIDO: Cerrar → Venta inmediata de mostrador
+      // ========================================
       .finalizarPedido(idPedidoFinal, {
         metodoPago: metodoPagoSeleccionado,
-        cerrar: true,
+        cerrar: (tipoFlujoFinal !== 'domicilio'), // false para domicilio, true para rapido
         meseroId: usuarioMesero ? usuarioMesero.id : '',
         meseroNombre: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
       });
@@ -1727,5 +1807,19 @@ function generarBadgeEstadoPedido(estado) {
   return badgeHTML;
 }
 
-console.log('JS-Meseros V18.1 SYNC cargado - Badge cocina con sincronizacion en tiempo real');
+console.log('JS-Meseros V21.1 FASE11 cargado - Badge cocina + Seguridad cierre de mesas + Fix Domicilios POS');
+// ============================================
+// V21.1 FASE 11 CHANGELOG:
+// - FIX CRITICO: Flujo Domicilios POS corregido
+//   * Domicilio: NO cierra pedido → Mantiene 'Solicitado' + 'Abierto'
+//   * El pedido aparece en Dashboard GIP para gestión Cocina/Domiciliario
+//   * Pedido Rápido: Mantiene cierre inmediato (venta mostrador)
+// - Mantiene: Impresión ticket, WhatsApp, Modal éxito
+// ============================================
+// V21 CHANGELOG:
+// - Agregada visualización del mesero responsable en modal de mesa ocupada
+// - Implementado Security Guard en cobrarMesa() que valida propiedad de mesa
+// - Solo el mesero que abrió la mesa o Admin/SuperAdmin puede cerrarla
+// - Failsafe: Si meseroAsignado es vacío/null, se permite cierre
+// ============================================
 </script>
