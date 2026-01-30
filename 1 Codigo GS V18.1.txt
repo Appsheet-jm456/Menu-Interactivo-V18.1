@@ -1,6 +1,10 @@
 // ============================================
-// CÓDIGO BACKEND - CLOUDPYME POS V16
+// CÓDIGO BACKEND - CLOUDPYME POS V18.1
 // Refactorizado: Codificación UTF-8 Corregida
+// FASE 11 FIX:
+// - finalizarPedido() ahora respeta estados explicitos del frontend
+// - Domicilios: Estado_Logistico='Solicitado', Estado_Cierre='Abierto'
+// - Pedidos Rapido: mantienen cierre automatico (Entregado/Cerrado)
 // ============================================
 
 const CONFIG = {
@@ -1960,14 +1964,33 @@ function finalizarPedido(idPedido, datosCierre) {
         if (datosCierre && datosCierre.metodoPago) {
           sheetPedidos.getRange(fila, 12).setValue(datosCierre.metodoPago);
         }
-        
-        if (datosCierre && datosCierre.cerrar) {
-          sheetPedidos.getRange(fila, 5).setValue('Entregado');
-          sheetPedidos.getRange(fila, 14).setValue('Cerrado');
+
+        // ========================================
+        // FIX FASE 11: Respetar estados especificos del frontend
+        // Si se envian estados explicitos, usarlos (caso Domicilio)
+        // Si solo se envia cerrar=true sin estados, usar logica por defecto (caso Rapido)
+        // ========================================
+        if (datosCierre) {
+          // Caso 1: Estados explicitos enviados (Domicilio)
+          if (datosCierre.estadoLogistico) {
+            sheetPedidos.getRange(fila, 5).setValue(datosCierre.estadoLogistico);
+            Logger.log('Estado Logistico establecido: ' + datosCierre.estadoLogistico);
+          }
+          if (datosCierre.estadoCierre) {
+            sheetPedidos.getRange(fila, 14).setValue(datosCierre.estadoCierre);
+            Logger.log('Estado Cierre establecido: ' + datosCierre.estadoCierre);
+          }
+
+          // Caso 2: Solo cerrar=true SIN estados explicitos (Pedido Rapido)
+          if (datosCierre.cerrar && !datosCierre.estadoLogistico && !datosCierre.estadoCierre) {
+            sheetPedidos.getRange(fila, 5).setValue('Entregado');
+            sheetPedidos.getRange(fila, 14).setValue('Cerrado');
+            Logger.log('Pedido cerrado automaticamente (Pedido Rapido/Mostrador)');
+          }
         }
-        
+
         SpreadsheetApp.flush();
-        Logger.log('Pedido finalizado correctamente');
+        Logger.log('Pedido finalizado correctamente - Tipo: ' + (datosCierre.estadoLogistico ? 'Domicilio (Abierto)' : 'Rapido (Cerrado)'));
         break;
       }
     }

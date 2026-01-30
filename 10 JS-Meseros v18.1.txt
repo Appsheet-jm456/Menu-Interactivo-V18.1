@@ -6,6 +6,10 @@
 // - Polling ligero cada 15s (solo con modal abierto)
 // - Notificacion sonora cuando pedido esta LISTO
 // - Vibracion en dispositivos moviles
+// FASE 11 FIX:
+// - Flujo Domicilios corregido: Estado_Logistico='Solicitado', Estado_Cierre='Abierto'
+// - Pedidos Domicilio ahora aparecen en Cocina y GIP para gestion completa
+// - Pedidos Rapido mantienen cierre inmediato (Entregado/Cerrado)
 // ============================================
 
 var usuarioMesero = null;
@@ -1233,7 +1237,30 @@ function confirmarPago() {
 
     var clienteActual = pedidoActivo ? (pedidoActivo.cliente || {}) : {};
 
-    console.log('Ejecutando finalizarPedido para:', idPedidoFinal);
+    console.log('Ejecutando finalizarPedido para:', idPedidoFinal, '| Tipo:', tipoFlujoFinal);
+
+    // ========================================
+    // FIX FASE 11: Determinar estados segun tipo de pedido
+    // Domicilio: Mantener abierto para flujo Cocina -> Domiciliario
+    // Rapido: Cerrar inmediatamente (venta mostrador)
+    // ========================================
+    var datosCierreEnviar = {
+      metodoPago: metodoPagoSeleccionado,
+      meseroId: usuarioMesero ? usuarioMesero.id : '',
+      meseroNombre: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
+    };
+
+    if (tipoFlujoFinal === 'domicilio') {
+      // DOMICILIO: NO cerrar - debe pasar por Cocina y Domiciliario
+      datosCierreEnviar.cerrar = false;
+      datosCierreEnviar.estadoLogistico = 'Solicitado';  // Aparece en Cocina
+      datosCierreEnviar.estadoCierre = 'Abierto';        // Permite gestion en GIP
+      console.log('DOMICILIO: Enviando con estados abiertos para flujo GIP');
+    } else {
+      // RAPIDO (Mostrador): Cerrar inmediatamente
+      datosCierreEnviar.cerrar = true;
+      console.log('RAPIDO: Cerrando pedido inmediatamente');
+    }
 
     google.script.run
       .withSuccessHandler(function(r) {
@@ -1287,12 +1314,7 @@ function confirmarPago() {
         console.error('Error de conexion:', error);
         mostrarToast('error', 'Error de conexion', 'No se pudo conectar');
       })
-      .finalizarPedido(idPedidoFinal, {
-        metodoPago: metodoPagoSeleccionado,
-        cerrar: true,
-        meseroId: usuarioMesero ? usuarioMesero.id : '',
-        meseroNombre: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
-      });
+      .finalizarPedido(idPedidoFinal, datosCierreEnviar);
 
   } else {
     // Sin mesa ni pedido activo
