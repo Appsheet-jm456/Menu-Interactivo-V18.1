@@ -1322,7 +1322,8 @@ function abrirMesa(idMesa, datos) {
     
     sheetMesas.getRange(filaEncontrada, 5).setValue('Ocupada');
     sheetMesas.getRange(filaEncontrada, 6).setValue(idPedido);
-    sheetMesas.getRange(filaEncontrada, 7).setValue(datos.meseroId || '');
+    // V21 FIX: Guardar NOMBRE del mesero en lugar de ID para visualización correcta
+    sheetMesas.getRange(filaEncontrada, 7).setValue(datos.meseroNombre || datos.meseroId || '');
     sheetMesas.getRange(filaEncontrada, 8).setValue(timestamp);
     
     registrarCambioEstado(idPedido, idClienteNormalizado, datos.meseroId, datos.meseroNombre || 'Mesero', 'Mesero', 'N/A', 'Solicitado', 'Mesa ' + idMesa + ' abierta');
