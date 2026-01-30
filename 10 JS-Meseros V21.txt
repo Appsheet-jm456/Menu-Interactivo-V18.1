@@ -1310,9 +1310,14 @@ function confirmarPago() {
         console.error('Error de conexion:', error);
         mostrarToast('error', 'Error de conexion', 'No se pudo conectar');
       })
+      // ========================================
+      // FASE 11 FIX: Diferenciación Domicilio vs Rápido
+      // DOMICILIO: NO cerrar → Mantiene 'Solicitado' + 'Abierto' para flujo GIP
+      // RAPIDO: Cerrar → Venta inmediata de mostrador
+      // ========================================
       .finalizarPedido(idPedidoFinal, {
         metodoPago: metodoPagoSeleccionado,
-        cerrar: true,
+        cerrar: (tipoFlujoFinal !== 'domicilio'), // false para domicilio, true para rapido
         meseroId: usuarioMesero ? usuarioMesero.id : '',
         meseroNombre: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
       });
@@ -1802,7 +1807,14 @@ function generarBadgeEstadoPedido(estado) {
   return badgeHTML;
 }
 
-console.log('JS-Meseros V21 SECURITY cargado - Badge cocina + Seguridad cierre de mesas');
+console.log('JS-Meseros V21.1 FASE11 cargado - Badge cocina + Seguridad cierre de mesas + Fix Domicilios POS');
+// ============================================
+// V21.1 FASE 11 CHANGELOG:
+// - FIX CRITICO: Flujo Domicilios POS corregido
+//   * Domicilio: NO cierra pedido → Mantiene 'Solicitado' + 'Abierto'
+//   * El pedido aparece en Dashboard GIP para gestión Cocina/Domiciliario
+//   * Pedido Rápido: Mantiene cierre inmediato (venta mostrador)
+// - Mantiene: Impresión ticket, WhatsApp, Modal éxito
 // ============================================
 // V21 CHANGELOG:
 // - Agregada visualización del mesero responsable en modal de mesa ocupada
