@@ -749,7 +749,41 @@ function renderizarModalDetalle() {
   document.getElementById('modalClienteTelefono').textContent = datosCliente.celular || p.telefonoContacto || '-';
   document.getElementById('modalClienteEmail').textContent = datosCliente.email || '-';
   document.getElementById('modalTipoEntrega').textContent = p.tipoEntrega || '-';
-  
+
+  // V21: Mostrar datos de Mesa y Mesero
+  let datosOperacionContainer = document.getElementById('datosOperacionContainer');
+  if (!datosOperacionContainer) {
+    // Crear contenedor si no existe
+    datosOperacionContainer = document.createElement('div');
+    datosOperacionContainer.id = 'datosOperacionContainer';
+    datosOperacionContainer.className = 'datos-operacion';
+    // Insertar después de modalTipoEntrega
+    const tipoEntregaEl = document.getElementById('modalTipoEntrega');
+    if (tipoEntregaEl && tipoEntregaEl.parentNode && tipoEntregaEl.parentNode.parentNode) {
+      tipoEntregaEl.parentNode.parentNode.insertAdjacentElement('afterend', datosOperacionContainer);
+    }
+  }
+
+  // Solo mostrar si hay datos relevantes (Mesa o Mesero)
+  const tieneDatosMesa = p.idMesa || p.tipoEntrega === 'Mesa';
+  const tieneDatosMesero = p.atendidoPor && p.atendidoPor.trim() !== '';
+
+  if (tieneDatosMesa || tieneDatosMesero) {
+    datosOperacionContainer.style.display = 'block';
+    datosOperacionContainer.innerHTML = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
+      '<div>' +
+        '<p style="margin: 0 0 4px 0; font-size: 13px; color: #6b7280;"><strong>🏠 Mesa:</strong></p>' +
+        '<p style="margin: 0; font-size: 14px; color: #111827;">' + (p.idMesa || 'N/A') + (p.comensales ? ' (' + p.comensales + ' comensales)' : '') + '</p>' +
+      '</div>' +
+      '<div>' +
+        '<p style="margin: 0 0 4px 0; font-size: 13px; color: #6b7280;"><strong>💁‍♂️ Atendido por:</strong></p>' +
+        '<p style="margin: 0; font-size: 14px; color: #111827;">' + (p.atendidoPor || 'Sistema') + '</p>' +
+      '</div>' +
+    '</div>';
+  } else {
+    datosOperacionContainer.style.display = 'none';
+  }
+
   // Dirección con herramientas para domicilios
   const direccionContainer = document.getElementById('direccionContainer');
   if (p.tipoEntrega === 'Domicilio' && p.direccionEntrega) {
@@ -1112,8 +1146,167 @@ function cerrarModalDetalle() {
   pedidoSeleccionado = null;
 }
 
+/**
+ * 🖨️ V21: Imprime ticket térmico de 80mm compatible con impresoras POS
+ * Esta función unifica el formato de impresión con Panel Meseros
+ */
 function imprimirComanda() {
-  window.print();
+  if (!pedidoSeleccionado) {
+    mostrarToast('error', 'Error', 'No hay pedido seleccionado para imprimir');
+    return;
+  }
+
+  const p = pedidoSeleccionado;
+  const moneda = configuracion.moneda || '$';
+  const nombreEmpresa = configuracion.nombreEmpresa || 'CloudPyme Restaurant';
+  const nit = configuracion.nit || '';
+  const direccionEmpresa = configuracion.direccion || '';
+  const telefonoEmpresa = configuracion.telefono || '';
+
+  // Formatear fecha
+  let fechaFormateada = 'N/A';
+  let horaFormateada = 'N/A';
+  try {
+    const fechaObj = new Date(p.fechaPedido);
+    if (!isNaN(fechaObj.getTime())) {
+      fechaFormateada = fechaObj.toLocaleDateString('es-CO');
+      horaFormateada = fechaObj.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    }
+  } catch (e) {
+    console.error('Error parseando fecha:', e);
+  }
+
+  // Determinar datos del cliente
+  const datosCliente = obtenerDatosClienteLocal(p.idCliente);
+  const nombreCliente = datosCliente.nombre || p.nombreCliente || 'Cliente General';
+  const telefonoCliente = datosCliente.celular || p.telefonoContacto || 'N/A';
+
+  // Generar filas de items
+  let itemsHtml = '';
+  if (p.items && p.items.length > 0) {
+    p.items.forEach(function(item) {
+      itemsHtml += '<tr>' +
+        '<td style="padding: 4px 2px; text-align: center; font-size: 12px; font-weight: bold;">' + item.cantidad + '</td>' +
+        '<td style="padding: 4px 2px; font-size: 11px;">' + item.nombreProducto +
+          (item.adiciones ? '<div style="font-size: 10px; color: #555;">+ ' + item.adiciones + '</div>' : '') +
+        '</td>' +
+        '<td style="padding: 4px 2px; text-align: right; font-size: 11px;">' + moneda + formatearPrecio(item.subtotalItem) + '</td>' +
+      '</tr>';
+    });
+  } else {
+    itemsHtml = '<tr><td colspan="3" style="text-align: center; padding: 15px; color: #999;">Sin detalle de items</td></tr>';
+  }
+
+  // Sección de contexto según tipo de entrega
+  let seccionContexto = '';
+  if (p.tipoEntrega === 'Mesa' || p.idMesa) {
+    seccionContexto = '<div style="text-align: center; margin: 15px 0; padding: 10px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000;">' +
+      '<div style="font-size: 28px; font-weight: bold;">MESA</div>' +
+      '<div style="font-size: 48px; font-weight: bold;">' + (p.idMesa || 'N/A') + '</div>' +
+      (p.comensales ? '<div style="font-size: 12px; margin-top: 5px;">' + p.comensales + ' comensales</div>' : '') +
+    '</div>';
+  } else if (p.tipoEntrega === 'Domicilio') {
+    seccionContexto = '<div style="margin: 10px 0; padding: 10px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000;">' +
+      '<div style="text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 8px;">🛵 DOMICILIO</div>' +
+      '<div style="font-size: 12px;"><strong>Cliente:</strong> ' + nombreCliente + '</div>' +
+      '<div style="font-size: 12px;"><strong>Tel:</strong> ' + telefonoCliente + '</div>' +
+      '<div style="font-size: 13px; padding: 5px; background: #f0f0f0; margin-top: 5px;"><strong>Dir:</strong> ' + (p.direccionEntrega || 'N/A') + '</div>' +
+    '</div>';
+  } else {
+    seccionContexto = '<div style="text-align: center; margin: 15px 0; padding: 15px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000;">' +
+      '<div style="font-size: 22px; font-weight: bold;">🥡 PARA LLEVAR</div>' +
+      '<div style="font-size: 14px; color: #666;">MOSTRADOR</div>' +
+    '</div>';
+  }
+
+  // Totales
+  let totalesHtml = '<div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #000;">' +
+    '<div style="display: flex; justify-content: space-between; font-size: 12px;"><span>Subtotal:</span><span>' + moneda + formatearPrecio(p.subtotal) + '</span></div>';
+
+  if (p.descuento > 0) {
+    totalesHtml += '<div style="display: flex; justify-content: space-between; font-size: 12px; color: #28a745;"><span>Descuento:</span><span>-' + moneda + formatearPrecio(p.descuento) + '</span></div>';
+  }
+
+  totalesHtml += '<div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: bold; margin-top: 8px; padding-top: 5px; border-top: 1px solid #000;">' +
+    '<span>TOTAL:</span><span>' + moneda + formatearPrecio(p.total) + '</span></div>' +
+    '<div style="text-align: right; font-size: 11px; color: #666; margin-top: 5px;">Pago: <strong>' + (p.metodoPago || 'Efectivo') + '</strong></div>' +
+  '</div>';
+
+  // HTML completo del ticket
+  const htmlTicket = '<!DOCTYPE html>' +
+    '<html><head><meta charset="UTF-8"><title>Ticket ' + p.idPedido + '</title>' +
+    '<style>' +
+      '@page { size: 80mm auto; margin: 0; }' +
+      '@media print { body { width: 80mm; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }' +
+      '* { margin: 0; padding: 0; box-sizing: border-box; font-family: "Courier New", Courier, monospace; }' +
+      'body { width: 80mm; max-width: 80mm; padding: 5mm; background: #fff; color: #000; }' +
+    '</style></head><body>' +
+    // Cabecera
+    '<div style="text-align: center; margin-bottom: 10px;">' +
+      '<div style="font-size: 20px; font-weight: bold;">' + nombreEmpresa + '</div>' +
+      (nit ? '<div style="font-size: 10px; color: #555;">NIT: ' + nit + '</div>' : '') +
+      (direccionEmpresa ? '<div style="font-size: 9px; color: #666;">' + direccionEmpresa + '</div>' : '') +
+      (telefonoEmpresa ? '<div style="font-size: 9px; color: #666;">Tel: ' + telefonoEmpresa + '</div>' : '') +
+    '</div>' +
+    // Info del pedido
+    '<div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 8px 0;">' +
+      '<div style="display: flex; justify-content: space-between; font-size: 11px;"><span><strong>Pedido:</strong></span><span>#' + p.idPedido + '</span></div>' +
+      '<div style="display: flex; justify-content: space-between; font-size: 11px;"><span><strong>Fecha:</strong></span><span>' + fechaFormateada + '</span></div>' +
+      '<div style="display: flex; justify-content: space-between; font-size: 11px;"><span><strong>Hora:</strong></span><span>' + horaFormateada + '</span></div>' +
+      '<div style="display: flex; justify-content: space-between; font-size: 11px;"><span><strong>Atendió:</strong></span><span>' + (p.atendidoPor || 'Sistema') + '</span></div>' +
+      '<div style="display: flex; justify-content: space-between; font-size: 11px;"><span><strong>Estado:</strong></span><span style="font-weight: bold;">' + p.estadoLogistico + '</span></div>' +
+    '</div>' +
+    // Contexto (Mesa/Domicilio/Para llevar)
+    seccionContexto +
+    // Items
+    '<div style="margin: 10px 0;">' +
+      '<div style="font-weight: bold; margin-bottom: 5px;">DETALLE DEL PEDIDO</div>' +
+      '<table style="width: 100%; border-collapse: collapse;">' +
+        '<thead><tr style="border-bottom: 1px solid #000;">' +
+          '<th style="padding: 4px 2px; text-align: center; font-size: 10px; width: 15%;">Cant</th>' +
+          '<th style="padding: 4px 2px; text-align: left; font-size: 10px;">Producto</th>' +
+          '<th style="padding: 4px 2px; text-align: right; font-size: 10px; width: 25%;">Total</th>' +
+        '</tr></thead>' +
+        '<tbody>' + itemsHtml + '</tbody>' +
+      '</table>' +
+    '</div>' +
+    // Totales
+    totalesHtml +
+    // Footer
+    '<div style="text-align: center; margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000;">' +
+      '<div style="font-size: 12px; font-weight: bold;">¡Gracias por su compra!</div>' +
+      '<div style="font-size: 9px; color: #888; margin-top: 5px;">' + nombreEmpresa + ' - Sistema POS V21</div>' +
+    '</div>' +
+    '<div style="height: 20mm;"></div>' +
+    '</body></html>';
+
+  // Abrir ventana e imprimir
+  try {
+    const ventana = window.open('', '_blank', 'width=320,height=600,scrollbars=yes,resizable=yes');
+
+    if (!ventana) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Bloqueo de Popup',
+        text: 'Por favor habilita las ventanas emergentes para imprimir'
+      });
+      return;
+    }
+
+    ventana.document.write(htmlTicket);
+    ventana.document.close();
+
+    setTimeout(function() {
+      ventana.focus();
+      ventana.print();
+    }, 300);
+
+    mostrarToast('success', 'Imprimiendo', 'Generando ticket térmico...');
+
+  } catch (error) {
+    console.error('Error al generar ticket:', error);
+    mostrarToast('error', 'Error', 'No se pudo generar el ticket');
+  }
 }
 
 // ============================================

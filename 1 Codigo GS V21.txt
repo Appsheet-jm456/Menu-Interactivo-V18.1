@@ -762,7 +762,10 @@ function obtenerDetallePedidoDashboard(idPedido) {
           notas: String(row[COL.NOTAS] || ''),
           estadoCierre: String(row[COL.ESTADO_CIERRE] || 'Abierto'),
           motivoCancelacion: String(row[COL.MOTIVO_CANCELACION] || ''),
-          atendidoPor: String(row[COL.ATENDIDO_POR] || '')
+          atendidoPor: String(row[COL.ATENDIDO_POR] || ''),
+          // V21: Campos adicionales para Mesa y Comensales
+          idMesa: tieneNuevaEstructura && row[17] ? String(row[17]) : '',
+          comensales: tieneNuevaEstructura && row[19] ? Number(row[19]) : 0
         };
         break;
       }
