@@ -1317,7 +1317,8 @@ function abrirMesa(idMesa, datos) {
     const rowPedido = [
       idPedido, idClienteNormalizado, timestamp, fechaSolo, 'Solicitado',
       'Mesa', '', '', 0, 0, 0, '', datos.notas || '', 'Abierto', '',
-      datos.meseroId || '', 'Panel Meseros', idMesa, datos.meseroId || '',
+      // V21 FIX: Guardar NOMBRE del mesero en ATENDIDO_POR para visualización correcta en Dashboard
+      datos.meseroNombre || datos.meseroId || '', 'Panel Meseros', idMesa, datos.meseroId || '',
       datos.comensales || 1
     ];
     
