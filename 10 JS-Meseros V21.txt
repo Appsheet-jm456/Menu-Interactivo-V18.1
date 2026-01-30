@@ -1,0 +1,1731 @@
+<script>
+// ============================================
+// PANEL MESEROS V18.1 SYNC - JAVASCRIPT COMPLETO
+// MEJORAS:
+// - Badge Estado Cocina sincronizado con GIP
+// - Polling ligero cada 15s (solo con modal abierto)
+// - Notificacion sonora cuando pedido esta LISTO
+// - Vibracion en dispositivos moviles
+// ============================================
+
+var usuarioMesero = null;
+var configuracion = {};
+var mesas = [];
+var categorias = [];
+var productos = [];
+var mesaSeleccionada = null;
+var pedidoActivo = null;
+var carritoPOS = [];
+var metodoPagoSeleccionado = 'Efectivo';
+var tipoPedidoActual = null;
+var pinIngresado = '';
+var totalActualCobro = 0;
+var ultimoPedidoExitoso = null;
+// NUEVO V13: Variable para guardar el total antes de limpiar carrito
+var totalCarritoEnviado = 0;
+
+// ============================================
+// V18.1 SYNC: Variables para sincronizacion badge cocina
+// ============================================
+var intervalSyncBadge = null;        // Intervalo de polling
+var estadoAnteriorCocina = null;     // Estado anterior para detectar cambios
+var SYNC_INTERVAL_MS = 15000;        // Polling cada 15 segundos
+
+// ============================================
+// INICIALIZACION
+// ============================================
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('Panel Meseros V18.1 iniciado');
+  iniciarReloj();
+  cargarConfiguracionInicial();
+});
+
+function cargarConfiguracionInicial() {
+  google.script.run.withSuccessHandler(function(result) {
+    if (result && result.success) {
+      configuracion = result.config || {};
+      aplicarConfiguracion();
+    }
+  }).withFailureHandler(function(error) {
+    console.error('Error:', error);
+  }).obtenerConfiguracion();
+}
+
+function aplicarConfiguracion() {
+  var nombreEmpresa = configuracion.nombreEmpresa || 'CloudPyme';
+  var el = document.getElementById('loginEmpresaNombre');
+  if (el) el.textContent = nombreEmpresa + String.fromCharCode(174);
+}
+
+function iniciarReloj() {
+  actualizarReloj();
+  setInterval(actualizarReloj, 1000);
+}
+
+function actualizarReloj() {
+  var ahora = new Date();
+  var horaEl = document.getElementById('headerHora');
+  var fechaEl = document.getElementById('headerFecha');
+  if (horaEl) horaEl.textContent = ahora.toLocaleTimeString('es-CO', {hour:'2-digit', minute:'2-digit'});
+  if (fechaEl) fechaEl.textContent = ahora.toLocaleDateString('es-CO', {weekday:'short', day:'numeric', month:'short'});
+}
+
+// ============================================
+// PIN PAD
+// ============================================
+function agregarDigito(digito) {
+  if (pinIngresado.length >= 4) return;
+  pinIngresado += digito;
+  actualizarPinDisplay();
+  if (navigator.vibrate) navigator.vibrate(30);
+  if (pinIngresado.length === 4) setTimeout(validarPin, 300);
+}
+
+function borrarDigito() {
+  if (pinIngresado.length === 0) return;
+  pinIngresado = pinIngresado.slice(0, -1);
+  actualizarPinDisplay();
+  var dots = document.querySelectorAll('.pin-dot');
+  for (var i = 0; i < dots.length; i++) dots[i].classList.remove('error');
+}
+
+function actualizarPinDisplay() {
+  for (var i = 1; i <= 4; i++) {
+    var dot = document.getElementById('dot' + i);
+    if (dot) {
+      if (i <= pinIngresado.length) dot.classList.add('filled');
+      else dot.classList.remove('filled');
+    }
+  }
+}
+
+function validarPin() {
+  if (pinIngresado.length !== 4) { mostrarErrorLogin('PIN de 4 digitos'); return; }
+  mostrarLoading(true, 'Validando...');
+
+  google.script.run.withSuccessHandler(function(result) {
+    mostrarLoading(false);
+    if (result && result.success) {
+      usuarioMesero = result.usuario;
+      pinIngresado = '';
+      actualizarPinDisplay();
+      cambiarVista('dashboard');
+      cargarDatosIniciales();
+      mostrarToast('success', 'Bienvenido!', 'Hola, ' + usuarioMesero.nombre);
+    } else {
+      mostrarErrorPinIncorrecto();
+      mostrarErrorLogin(result.message || 'PIN invalido');
+    }
+  }).withFailureHandler(function(error) {
+    mostrarLoading(false);
+    mostrarErrorPinIncorrecto();
+    mostrarErrorLogin('Error de conexion');
+  }).validarPinMesero(pinIngresado);
+}
+
+function mostrarErrorPinIncorrecto() {
+  pinIngresado = '';
+  var dots = document.querySelectorAll('.pin-dot');
+  for (var i = 0; i < dots.length; i++) {
+    dots[i].classList.remove('filled');
+    dots[i].classList.add('error');
+  }
+  setTimeout(function() {
+    var d = document.querySelectorAll('.pin-dot');
+    for (var j = 0; j < d.length; j++) d[j].classList.remove('error');
+  }, 500);
+}
+
+function mostrarErrorLogin(msg) {
+  var el = document.getElementById('loginError');
+  if (el) { el.textContent = msg; el.classList.add('show'); setTimeout(function(){ el.classList.remove('show'); }, 4000); }
+}
+
+// ============================================
+// VISTAS
+// ============================================
+function cambiarVista(vista) {
+  var login = document.getElementById('login-container');
+  var app = document.getElementById('app-container');
+  if (vista === 'dashboard') {
+    login.style.display = 'none';
+    app.style.display = 'block';
+    if (usuarioMesero) {
+      var un = document.getElementById('userName');
+      var mi = document.getElementById('inputMeseroAsignado');
+      if (un) un.textContent = usuarioMesero.nombre;
+      if (mi) mi.value = usuarioMesero.nombre;
+    }
+  } else {
+    login.style.display = 'flex';
+    app.style.display = 'none';
+  }
+}
+
+function cerrarSesion() {
+  if (confirm('Cerrar sesion?')) {
+    usuarioMesero = null;
+    mesas = [];
+    categorias = [];
+    productos = [];
+    mesaSeleccionada = null;
+    pedidoActivo = null;
+    carritoPOS = [];
+    metodoPagoSeleccionado = 'Efectivo';
+    tipoPedidoActual = null;
+    pinIngresado = '';
+    totalActualCobro = 0;
+    ultimoPedidoExitoso = null;
+    totalCarritoEnviado = 0;
+
+    actualizarPinDisplay();
+    cambiarVista('login');
+    mostrarToast('info', 'Sesion cerrada', 'Hasta luego');
+  }
+}
+
+// ============================================
+// DATOS
+// ============================================
+function cargarDatosIniciales() {
+  mostrarLoading(true, 'Cargando...');
+  google.script.run.withSuccessHandler(function(result) {
+    mostrarLoading(false);
+    if (result && result.success) {
+      mesas = result.mesas || [];
+      categorias = result.categorias || [];
+      productos = result.productos || [];
+      if (result.config) { configuracion = result.config; aplicarConfiguracion(); }
+      renderizarMesas();
+      actualizarMetricas();
+      console.log('Datos cargados - Mesas:', mesas.length, 'Productos:', productos.length);
+    } else {
+      mostrarToast('error', 'Error', result.message || 'No se cargaron datos');
+    }
+  }).withFailureHandler(function(e) {
+    mostrarLoading(false);
+    mostrarToast('error', 'Error', 'Conexion fallida');
+    console.error('Error cargando datos:', e);
+  }).obtenerDatosInicialesMeseros();
+}
+
+function refrescarDatos() { mostrarToast('info', 'Actualizando...', ''); cargarDatosIniciales(); }
+
+// ============================================
+// MESAS
+// ============================================
+function renderizarMesas() {
+  var c = document.getElementById('mesasGrid');
+  if (!c) return;
+
+  if (mesas.length === 0) {
+    c.innerHTML = '<div class="loading-mesas"><p>No hay mesas disponibles</p><button type="button" class="btn-primary" onclick="refrescarDatos()" style="margin-top:15px;">Recargar</button></div>';
+    return;
+  }
+
+  var m = configuracion.moneda || '$';
+  var html = '';
+    for (var i = 0; i < mesas.length; i++) {
+    var mesa = mesas[i];
+    var cl = mesa.estado === 'Libre' ? 'mesa-libre' : (mesa.estado === 'Ocupada' ? 'mesa-ocupada' : (mesa.estado === 'Reservada' ? 'mesa-reservada' : 'mesa-cuenta'));
+    var st = mesa.estado === 'Libre' ? 'Libre' : (mesa.estado === 'Ocupada' ? 'Ocupada' : (mesa.estado === 'Reservada' ? 'Reservada' : 'Por Cobrar'));
+    var cont = '<div class="mesa-nombre">' + mesa.nombre + '</div>';
+    if (mesa.estado === 'Ocupada' || mesa.estado === 'Por Cobrar') {
+      cont += '<div class="mesa-info">' + calcTiempo(mesa.horaOcupacion) + '</div>';
+      cont += '<div class="mesa-total">' + m + formatearPrecio(mesa.totalConsumo || 0) + '</div>';
+    } else {
+      cont += '<div class="mesa-info">' + mesa.capacidad + ' personas</div>';
+    }
+    cont += '<span class="mesa-status">' + st + '</span>';
+    html += '<div class="mesa-card ' + cl + '" onclick="clickMesa(\'' + mesa.id + '\')">' + cont + '</div>';
+  }
+  c.innerHTML = html;
+}
+
+function calcTiempo(h) {
+  if (!h) return '0 min';
+  var d = Math.floor((new Date() - new Date(h)) / 60000);
+  return d < 60 ? d + ' min' : Math.floor(d/60) + 'h ' + (d%60) + 'm';
+}
+
+function actualizarMetricas() {
+  var t=mesas.length, l=0, o=0, r=0;
+  for(var i=0;i<mesas.length;i++){
+    if(mesas[i].estado==='Libre')l++;
+    else if(mesas[i].estado==='Ocupada'||mesas[i].estado==='Por Cobrar')o++;
+    else if(mesas[i].estado==='Reservada')r++;
+  }
+  document.getElementById('metricTotal').textContent=t;
+  document.getElementById('metricLibres').textContent=l;
+  document.getElementById('metricOcupadas').textContent=o;
+  document.getElementById('metricReservadas').textContent=r;
+}
+
+function clickMesa(id) {
+  mesaSeleccionada = null;
+  for(var i=0;i<mesas.length;i++) if(mesas[i].id===id){mesaSeleccionada=mesas[i];break;}
+  if(!mesaSeleccionada) return;
+  if(mesaSeleccionada.estado==='Libre') abrirModalAbrirMesa();
+  else if(mesaSeleccionada.estado==='Ocupada'||mesaSeleccionada.estado==='Por Cobrar') abrirModalGestionarMesa();
+  else mostrarToast('info','Reservada','Mesa reservada');
+}
+
+// ============================================
+// MODAL ABRIR MESA
+// ============================================
+function abrirModalAbrirMesa() {
+  document.getElementById('abrirMesaNombre').textContent = mesaSeleccionada.nombre;
+  document.getElementById('inputComensales').value = 2;
+  document.getElementById('inputMeseroAsignado').value = usuarioMesero ? usuarioMesero.nombre : '';
+  document.getElementById('inputNotasMesa').value = '';
+  abrirModal('modalAbrirMesa');
+}
+
+function cambiarComensales(d) {
+  var inp = document.getElementById('inputComensales');
+  var v = parseInt(inp.value) + d;
+  if(v<1)v=1; if(v>20)v=20;
+  inp.value = v;
+}
+
+function confirmarAbrirMesa() {
+  if(!mesaSeleccionada||!usuarioMesero) return;
+  var com = parseInt(document.getElementById('inputComensales').value);
+  var not = document.getElementById('inputNotasMesa').value.trim();
+  mostrarLoading(true, 'Abriendo mesa...');
+
+  google.script.run.withSuccessHandler(function(r) {
+    mostrarLoading(false);
+    if(r&&r.success){
+      cerrarModal('modalAbrirMesa');
+      mostrarToast('success','Mesa abierta!',mesaSeleccionada.nombre);
+      for(var i=0;i<mesas.length;i++){
+        if(mesas[i].id===mesaSeleccionada.id){
+          mesas[i].estado='Ocupada';
+          mesas[i].idPedidoActivo=r.idPedido;
+          mesas[i].horaOcupacion=new Date().toISOString();
+          mesas[i].totalConsumo=0;
+          mesaSeleccionada=mesas[i];
+          break;
+        }
+      }
+      renderizarMesas(); actualizarMetricas();
+      tipoPedidoActual='mesa';
+      pedidoActivo={id:r.idPedido,tipo:'mesa',mesa:mesaSeleccionada};
+      setTimeout(function(){if(confirm('Agregar productos?'))abrirPOSMesa();},500);
+    }else{mostrarToast('error','Error',r.message||'No se pudo abrir');}
+  }).withFailureHandler(function(){
+    mostrarLoading(false);mostrarToast('error','Error','Conexion fallida');
+  }).abrirMesa(mesaSeleccionada.id,{comensales:com,notas:not,meseroId:usuarioMesero.id,meseroNombre:usuarioMesero.nombre});
+}
+
+// ============================================
+// MODAL GESTIONAR MESA OCUPADA - V18.1 CON SYNC COCINA
+// ============================================
+function abrirModalGestionarMesa() {
+  document.getElementById('gestionMesaNombre').textContent = mesaSeleccionada.nombre;
+  document.getElementById('gestionMesaInfo').textContent = calcTiempo(mesaSeleccionada.horaOcupacion);
+
+  // Limpiar badge anterior si existe
+  var badgeExistente = document.getElementById('badgeEstadoPedido');
+  if (badgeExistente) {
+    badgeExistente.remove();
+  }
+
+  // V18.1 SYNC: Resetear estado anterior y cargar items
+  estadoAnteriorCocina = null;
+  cargarItemsMesa();
+  abrirModal('modalGestionarMesa');
+
+  // V18.1 SYNC: Iniciar polling para sincronizar badge con cocina
+  iniciarSyncBadgeCocina();
+}
+
+// ============================================
+// V18.1 SYNC: Funciones de sincronizacion badge cocina
+// ============================================
+
+// Iniciar polling para sincronizar estado de cocina
+function iniciarSyncBadgeCocina() {
+  // Detener cualquier polling anterior
+  detenerSyncBadgeCocina();
+
+  // Solo iniciar si hay mesa seleccionada con pedido activo
+  if (!mesaSeleccionada || !mesaSeleccionada.idPedidoActivo) {
+    console.log('SyncBadge: Sin pedido activo, no se inicia polling');
+    return;
+  }
+
+  console.log('SyncBadge: Iniciando polling cada ' + (SYNC_INTERVAL_MS/1000) + 's para pedido:', mesaSeleccionada.idPedidoActivo);
+
+  // Iniciar intervalo de polling
+  intervalSyncBadge = setInterval(function() {
+    verificarEstadoCocina();
+  }, SYNC_INTERVAL_MS);
+}
+
+// Detener polling de sincronizacion
+function detenerSyncBadgeCocina() {
+  if (intervalSyncBadge) {
+    clearInterval(intervalSyncBadge);
+    intervalSyncBadge = null;
+    console.log('SyncBadge: Polling detenido');
+  }
+}
+
+// Verificar estado actual de cocina y actualizar badge
+function verificarEstadoCocina() {
+  // Validar que el modal siga abierto
+  var modal = document.getElementById('modalGestionarMesa');
+  if (!modal || !modal.classList.contains('show')) {
+    detenerSyncBadgeCocina();
+    return;
+  }
+
+  // Validar pedido activo
+  if (!mesaSeleccionada || !mesaSeleccionada.idPedidoActivo) {
+    detenerSyncBadgeCocina();
+    return;
+  }
+
+  // Consultar estado actual al backend
+  google.script.run
+    .withSuccessHandler(function(r) {
+      if (r && r.success) {
+        var estadoNuevo = (r.estado || 'Solicitado').toLowerCase();
+        var estadoAnterior = (estadoAnteriorCocina || '').toLowerCase();
+
+        console.log('SyncBadge: Estado recibido:', estadoNuevo, '| Anterior:', estadoAnterior);
+
+        // Detectar si cambio a LISTO (enviado/entregado)
+        var esListoNuevo = (estadoNuevo === 'enviado' || estadoNuevo === 'entregado' || estadoNuevo === 'listo' || estadoNuevo === 'terminado');
+        var eraListoAntes = (estadoAnterior === 'enviado' || estadoAnterior === 'entregado' || estadoAnterior === 'listo' || estadoAnterior === 'terminado');
+
+        // Si cambio a LISTO y antes no lo estaba, reproducir sonido
+        if (esListoNuevo && !eraListoAntes && estadoAnteriorCocina !== null) {
+          console.log('SyncBadge: Pedido LISTO! Reproduciendo notificacion...');
+          reproducirSonidoNotificacion();
+          mostrarToast('success', 'Pedido Listo!', 'El pedido de ' + mesaSeleccionada.nombre + ' esta listo para entregar');
+        }
+
+        // Actualizar badge visual
+        actualizarBadgeEstado(r.estado || 'Solicitado');
+
+        // Guardar estado para proxima comparacion
+        estadoAnteriorCocina = r.estado || 'Solicitado';
+      }
+    })
+    .withFailureHandler(function(e) {
+      console.error('SyncBadge: Error consultando estado:', e);
+    })
+    .obtenerItemsPedidoMesero(mesaSeleccionada.idPedidoActivo);
+}
+
+// Actualizar badge sin recargar toda la lista de items
+function actualizarBadgeEstado(estado) {
+  var totalesContainer = document.querySelector('.pedido-totales');
+  if (!totalesContainer) return;
+
+  var badgeViejo = document.getElementById('badgeEstadoPedido');
+  if (badgeViejo) {
+    badgeViejo.remove();
+  }
+
+  var badgeHTML = generarBadgeEstadoPedido(estado);
+  totalesContainer.insertAdjacentHTML('beforebegin', badgeHTML);
+}
+
+// Reproducir sonido de notificacion (pedido listo)
+function reproducirSonidoNotificacion() {
+  try {
+    // Crear contexto de audio
+    var AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) {
+      console.log('SyncBadge: Web Audio API no soportada');
+      return;
+    }
+
+    var audioCtx = new AudioContext();
+
+    // Crear secuencia de tonos (ding-dong alegre)
+    var tiempos = [0, 0.15, 0.3];
+    var frecuencias = [880, 1100, 1320]; // La5, Do#6, Mi6
+
+    for (var i = 0; i < tiempos.length; i++) {
+      (function(tiempo, freq) {
+        var oscillator = audioCtx.createOscillator();
+        var gainNode = audioCtx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.type = 'sine';
+        oscillator.frequency.value = freq;
+
+        var inicioTono = audioCtx.currentTime + tiempo;
+        gainNode.gain.setValueAtTime(0.3, inicioTono);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, inicioTono + 0.3);
+
+        oscillator.start(inicioTono);
+        oscillator.stop(inicioTono + 0.35);
+      })(tiempos[i], frecuencias[i]);
+    }
+
+    // Vibrar dispositivo si es movil
+    if (navigator.vibrate) {
+      navigator.vibrate([100, 50, 100, 50, 150]);
+    }
+
+    console.log('SyncBadge: Sonido reproducido');
+
+  } catch (e) {
+    console.error('SyncBadge: Error reproduciendo sonido:', e);
+  }
+}
+
+// ============================================
+// CARGAR ITEMS MESA - V18.1 CON BADGE ESTADO
+// ============================================
+function cargarItemsMesa() {
+  var c = document.getElementById('itemsMesaList');
+  var sub = document.getElementById('gestionSubtotal');
+  var tot = document.getElementById('gestionTotal');
+  var totalesContainer = document.querySelector('.pedido-totales');
+  var mon = configuracion.moneda || '$';
+
+  if(!mesaSeleccionada.idPedidoActivo) {
+    c.innerHTML = '<div class="item-row" style="justify-content:center;color:var(--text-secondary);">Sin items</div>';
+    sub.textContent = mon + '0';
+    tot.textContent = mon + '0';
+    return;
+  }
+
+  c.innerHTML = '<div class="item-row" style="justify-content:center;"><div class="spinner" style="width:20px;height:20px;"></div></div>';
+
+  google.script.run.withSuccessHandler(function(r) {
+    if(r && r.success && r.items && r.items.length > 0) {
+      var html = '', total = 0;
+
+      // V18.1: Determinar estado del pedido para el badge
+      var estadoPedido = r.estado || 'Solicitado';
+      var badgeHTML = generarBadgeEstadoPedido(estadoPedido);
+
+      for(var i = 0; i < r.items.length; i++) {
+        var it = r.items[i];
+        total += it.subtotalItem;
+        html += '<div class="item-row"><div class="item-info"><div class="item-nombre">' + it.cantidad + 'x ' + it.nombreProducto + '</div>' + (it.adiciones ? '<div class="item-detalle">+' + it.adiciones + '</div>' : '') + '</div><span class="item-precio">' + mon + formatearPrecio(it.subtotalItem) + '</span></div>';
+      }
+
+      c.innerHTML = html;
+      sub.textContent = mon + formatearPrecio(total);
+      tot.textContent = mon + formatearPrecio(total);
+
+      // V18.1: Insertar badge JUSTO ARRIBA del total
+      if(totalesContainer) {
+        // Verificar si ya existe badge para no duplicar
+        var badgeViejo = document.getElementById('badgeEstadoPedido');
+        if(badgeViejo) badgeViejo.remove();
+
+        // Insertar nuevo badge antes del contenedor de totales
+        totalesContainer.insertAdjacentHTML('beforebegin', badgeHTML);
+      }
+
+      // V18.1 SYNC: Guardar estado inicial para detectar cambios futuros
+      if (estadoAnteriorCocina === null) {
+        estadoAnteriorCocina = estadoPedido;
+        console.log('SyncBadge: Estado inicial establecido:', estadoPedido);
+      }
+
+      for(var j = 0; j < mesas.length; j++) {
+        if(mesas[j].id === mesaSeleccionada.id) {
+          mesas[j].totalConsumo = total;
+          mesaSeleccionada.totalConsumo = total;
+          break;
+        }
+      }
+    } else {
+      c.innerHTML = '<div class="item-row" style="justify-content:center;color:var(--text-secondary);">Sin items</div>';
+      sub.textContent = mon + '0';
+      tot.textContent = mon + '0';
+    }
+  }).withFailureHandler(function() {
+    c.innerHTML = '<div class="item-row">Error</div>';
+  }).obtenerItemsPedidoMesero(mesaSeleccionada.idPedidoActivo);
+}
+
+function verCuentaMesa(){mostrarToast('info','Cuenta','Visible en pantalla');}
+
+// V16: Funcion para imprimir comanda desde el modal de mesa ocupada
+function imprimirComandaMesa() {
+  if (!mesaSeleccionada) {
+    mostrarToast('error', 'Error', 'No hay mesa seleccionada');
+    return;
+  }
+
+  if (!mesaSeleccionada.idPedidoActivo) {
+    mostrarToast('warning', 'Sin pedido', 'Esta mesa no tiene un pedido activo');
+    return;
+  }
+
+  mostrarLoading(true, 'Cargando datos...');
+
+  google.script.run
+    .withSuccessHandler(function(r) {
+      mostrarLoading(false);
+      if (r && r.success && r.items) {
+        var pedidoParaImprimir = {
+          id: mesaSeleccionada.idPedidoActivo,
+          items: r.items,
+          subtotal: mesaSeleccionada.totalConsumo || 0,
+          total: mesaSeleccionada.totalConsumo || 0,
+          descuento: 0,
+          metodoPago: 'Pendiente',
+          fecha: mesaSeleccionada.horaOcupacion || new Date().toISOString(),
+          estado: 'En servicio',
+          origen: 'mesa',
+          numeroMesa: mesaSeleccionada.nombre,
+          atendidoPor: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
+        };
+        imprimirComanda(pedidoParaImprimir);
+        mostrarToast('success', 'Comanda', 'Generando impresion...');
+      } else {
+        mostrarToast('warning', 'Sin items', 'No hay productos en este pedido');
+      }
+    })
+    .withFailureHandler(function(e) {
+      mostrarLoading(false);
+      mostrarToast('error', 'Error', 'No se pudieron cargar los items');
+      console.error('Error cargando items:', e);
+    })
+    .obtenerItemsPedidoMesero(mesaSeleccionada.idPedidoActivo);
+}
+
+
+function cancelarMesa() {
+  if (!mesaSeleccionada) {
+    mostrarToast('error', 'Error', 'No hay mesa seleccionada');
+    return;
+  }
+
+  if (!mesaSeleccionada.idPedidoActivo) {
+    mostrarToast('warning', 'Sin pedido', 'Esta mesa no tiene un pedido activo');
+    cerrarModal('modalGestionarMesa');
+    return;
+  }
+
+  var motivo = prompt('Por que desea cancelar esta mesa? Ingrese el motivo:');
+
+  if (motivo === null) return;
+
+  motivo = motivo.trim();
+  if (!motivo || motivo.length < 3) {
+    mostrarToast('warning', 'Motivo requerido', 'Minimo 3 caracteres');
+    return;
+  }
+
+  if (!confirm('CONFIRMAR CANCELACION\n\nMesa: ' + mesaSeleccionada.nombre + '\nMotivo: ' + motivo + '\n\nEsta seguro?')) {
+    return;
+  }
+
+  mostrarLoading(true, 'Cancelando...');
+
+  var datosUsuario = {
+    id: usuarioMesero ? usuarioMesero.id : '',
+    nombre: usuarioMesero ? usuarioMesero.nombre : 'Sistema',
+    rol: usuarioMesero ? usuarioMesero.rol : 'Mesero'
+  };
+
+  google.script.run
+    .withSuccessHandler(function(r) {
+      mostrarLoading(false);
+      if (r && r.success) {
+        cerrarModal('modalGestionarMesa');
+        mostrarToast('success', 'Cancelado!', 'Pedido cancelado');
+
+        for (var i = 0; i < mesas.length; i++) {
+          if (mesas[i].id === mesaSeleccionada.id) {
+            mesas[i].estado = 'Libre';
+            mesas[i].idPedidoActivo = '';
+            mesas[i].horaOcupacion = null;
+            mesas[i].totalConsumo = 0;
+            break;
+          }
+        }
+
+        mesaSeleccionada = null;
+        pedidoActivo = null;
+        carritoPOS = [];
+        totalCarritoEnviado = 0;
+
+        renderizarMesas();
+        actualizarMetricas();
+      } else {
+        mostrarToast('error', 'Error', r.message || 'No se pudo cancelar');
+      }
+    })
+    .withFailureHandler(function() {
+      mostrarLoading(false);
+      mostrarToast('error', 'Error', 'Conexion fallida');
+    })
+    .cancelarPedidoBackend(mesaSeleccionada.idPedidoActivo, motivo, mesaSeleccionada.id, datosUsuario);
+}
+
+// ============================================
+// POS
+// ============================================
+function abrirPOSMesa() {
+  tipoPedidoActual='mesa';
+  if(!mesaSeleccionada){mostrarToast('error','Error','Sin mesa');return;}
+  document.getElementById('posTitulo').textContent='Agregar a '+mesaSeleccionada.nombre;
+  document.getElementById('posDestino').textContent=mesaSeleccionada.nombre;
+  pedidoActivo={id:mesaSeleccionada.idPedidoActivo,tipo:'mesa',mesa:mesaSeleccionada};
+  carritoPOS=[];
+  totalCarritoEnviado = 0; // Reset
+  renderizarCarritoPOS();renderizarCategoriasPOS();renderizarProductosPOS('TODOS');
+  cerrarModal('modalGestionarMesa');abrirModal('modalPOS');
+}
+
+function renderizarCategoriasPOS() {
+  var c=document.getElementById('posCategorias');
+  var html='<button type="button" class="pos-categoria active" onclick="seleccionarCategoriaPOS(\'TODOS\',this)">Todos</button>';
+  for(var i=0;i<categorias.length;i++){
+    var cat=categorias[i];
+    html+='<button type="button" class="pos-categoria" onclick="seleccionarCategoriaPOS(\''+cat.id+'\',this)">'+(cat.icono||'')+' '+cat.nombre+'</button>';
+  }
+  c.innerHTML=html;
+}
+
+function seleccionarCategoriaPOS(id,el) {
+  var cats=document.querySelectorAll('.pos-categoria');
+  for(var i=0;i<cats.length;i++)cats[i].classList.remove('active');
+  if(el)el.classList.add('active');
+  renderizarProductosPOS(id);
+}
+
+function renderizarProductosPOS(idCat) {
+  var c=document.getElementById('posProductosGrid');
+  var mon=configuracion.moneda||'$';
+  var prods=[];
+  for(var i=0;i<productos.length;i++){if(!idCat||idCat==='TODOS'||productos[i].categoria===idCat)prods.push(productos[i]);}
+  if(prods.length===0){c.innerHTML='<p style="grid-column:span 4;text-align:center;color:var(--text-secondary);padding:40px;">Sin productos</p>';return;}
+  var html='';
+  for(var j=0;j<prods.length;j++){
+    var p=prods[j];
+    var img=p.imagen||'https://via.placeholder.com/80x80/E5E7EB/9CA3AF?text='+encodeURIComponent(p.nombre.substring(0,2));
+    html+='<div class="pos-producto" onclick="agregarAlCarritoPOS(\''+p.id+'\')"><img src="'+img+'" class="pos-producto-img" onerror="this.src=\'https://via.placeholder.com/80x80/E5E7EB/9CA3AF?text=NA\'"><div class="pos-producto-nombre">'+p.nombre+'</div><div class="pos-producto-precio">'+mon+formatearPrecio(p.precio)+'</div></div>';
+  }
+  c.innerHTML=html;
+}
+
+function filtrarProductosPOS() {
+  var b=document.getElementById('posSearchInput').value.toLowerCase();
+  var c=document.getElementById('posProductosGrid');
+  var mon=configuracion.moneda||'$';
+  var prods=[];
+  for(var i=0;i<productos.length;i++){if(productos[i].nombre.toLowerCase().indexOf(b)!==-1)prods.push(productos[i]);}
+  if(prods.length===0){c.innerHTML='<p style="grid-column:span 4;text-align:center;padding:40px;">No encontrado</p>';return;}
+  var html='';
+  for(var j=0;j<prods.length;j++){
+    var p=prods[j];
+    html+='<div class="pos-producto" onclick="agregarAlCarritoPOS(\''+p.id+'\')"><img src="'+(p.imagen||'https://via.placeholder.com/80x80/E5E7EB/9CA3AF?text=NA')+'" class="pos-producto-img"><div class="pos-producto-nombre">'+p.nombre+'</div><div class="pos-producto-precio">'+mon+formatearPrecio(p.precio)+'</div></div>';
+  }
+  c.innerHTML=html;
+}
+
+function agregarAlCarritoPOS(idProd) {
+  var prod=null;for(var i=0;i<productos.length;i++)if(productos[i].id===idProd){prod=productos[i];break;}
+  if(!prod)return;
+  var existe=null;for(var j=0;j<carritoPOS.length;j++)if(carritoPOS[j].idProducto===idProd){existe=carritoPOS[j];break;}
+  if(existe){existe.cantidad++;existe.subtotal=existe.precioUnitario*existe.cantidad;}
+  else{carritoPOS.push({idProducto:prod.id,nombre:prod.nombre,cantidad:1,precioUnitario:prod.precio,adiciones:'',precioAdiciones:0,subtotal:prod.precio});}
+  renderizarCarritoPOS();
+  if(navigator.vibrate)navigator.vibrate(30);
+}
+
+function renderizarCarritoPOS() {
+  var c=document.getElementById('carritoItems');
+  var cnt=document.getElementById('carritoItemsCount');
+  var tot=document.getElementById('carritoTotal');
+  var mon=configuracion.moneda||'$';
+  if(carritoPOS.length===0){c.innerHTML='<div class="carrito-vacio"><span>Carrito</span><p>Vacio</p></div>';cnt.textContent='0';tot.textContent=mon+'0';return;}
+  var html='',ti=0,tp=0;
+  for(var i=0;i<carritoPOS.length;i++){
+    var it=carritoPOS[i];ti+=it.cantidad;tp+=it.subtotal;
+    html+='<div class="carrito-item"><div class="carrito-item-header"><span class="carrito-item-nombre">'+it.nombre+'</span><button type="button" class="carrito-item-eliminar" onclick="eliminarDelCarritoPOS('+i+')">X</button></div><div class="carrito-item-detalle"><div class="carrito-item-cantidad"><button type="button" onclick="cambiarCantidadCarritoPOS('+i+',-1)">-</button><span>'+it.cantidad+'</span><button type="button" onclick="cambiarCantidadCarritoPOS('+i+',1)">+</button></div><span class="carrito-item-precio">'+mon+formatearPrecio(it.subtotal)+'</span></div></div>';
+  }
+  c.innerHTML=html;cnt.textContent=ti;tot.textContent=mon+formatearPrecio(tp);
+}
+
+function cambiarCantidadCarritoPOS(i,d){carritoPOS[i].cantidad+=d;if(carritoPOS[i].cantidad<1)carritoPOS.splice(i,1);else carritoPOS[i].subtotal=carritoPOS[i].precioUnitario*carritoPOS[i].cantidad;renderizarCarritoPOS();}
+function eliminarDelCarritoPOS(i){carritoPOS.splice(i,1);renderizarCarritoPOS();}
+function limpiarCarritoPOS(){if(carritoPOS.length===0)return;if(confirm('Limpiar?')){carritoPOS=[];renderizarCarritoPOS();}}
+
+// ============================================
+// ENVIAR A COCINA - CORREGIDO V13
+// ============================================
+function enviarACocina() {
+  if(carritoPOS.length===0){mostrarToast('warning','Vacio','Agrega productos');return;}
+  if(!pedidoActivo||!pedidoActivo.id){mostrarToast('error','Error','Sin pedido activo');return;}
+  mostrarLoading(true,'Enviando...');
+
+  // CORREGIDO V13: Guardar el total del carrito ANTES de enviarlo
+  totalCarritoEnviado = 0;
+  for(var i=0;i<carritoPOS.length;i++){
+    totalCarritoEnviado += carritoPOS[i].subtotal;
+  }
+  console.log('Total carrito a enviar:', totalCarritoEnviado);
+
+  var items=[];
+  for(var j=0;j<carritoPOS.length;j++){
+    items.push({
+      idProducto:carritoPOS[j].idProducto,
+      cantidad:carritoPOS[j].cantidad,
+      precioUnitario:carritoPOS[j].precioUnitario,
+      adiciones:carritoPOS[j].adiciones||'',
+      precioAdiciones:carritoPOS[j].precioAdiciones||0
+    });
+  }
+
+  google.script.run.withSuccessHandler(function(r){
+    mostrarLoading(false);
+    if(r&&r.success){
+      mostrarToast('success','Enviado!','A cocina');
+
+      // Actualizar total en mesas localmente
+      if(tipoPedidoActual==='mesa'&&mesaSeleccionada){
+        var nuevoTotal = r.total || totalCarritoEnviado;
+        for(var i=0;i<mesas.length;i++){
+          if(mesas[i].id===mesaSeleccionada.id){
+            mesas[i].totalConsumo = nuevoTotal;
+            break;
+          }
+        }
+      }
+
+      // CORREGIDO V13: Para domicilio/rapido, preguntar si cobrar usando el total guardado
+      if(tipoPedidoActual==='domicilio'||tipoPedidoActual==='rapido'){
+        // Guardar el total en pedidoActivo para usarlo despues
+        pedidoActivo.totalCalculado = r.total || totalCarritoEnviado;
+        console.log('Total guardado en pedidoActivo:', pedidoActivo.totalCalculado);
+
+        setTimeout(function(){
+          if(confirm('Cobrar ahora?')){
+            abrirModalCobrar();
+          } else {
+            cerrarModalPOS();
+          }
+        },500);
+      } else {
+        carritoPOS=[];
+        renderizarCarritoPOS();
+        cerrarModalPOS();
+        renderizarMesas();
+      }
+    }else{mostrarToast('error','Error',r.message||'Fallo');}
+  }).withFailureHandler(function(){
+    mostrarLoading(false);
+    mostrarToast('error','Error','Conexion');
+  }).agregarItemsPedido(pedidoActivo.id,items,{id:usuarioMesero.id,nombre:usuarioMesero.nombre});
+}
+
+function cerrarModalPOS() {
+  cerrarModal('modalPOS');
+  carritoPOS = [];
+  totalCarritoEnviado = 0;
+  document.getElementById('posSearchInput').value = '';
+  renderizarCarritoPOS();
+}
+
+// ============================================
+// COBRAR MESA - V18 FIX CONCURRENCIA
+// ============================================
+function cobrarMesa() {
+  if(!mesaSeleccionada) {
+    mostrarToast('error', 'Error', 'No hay mesa seleccionada');
+    return;
+  }
+
+  // ========================================
+  // FIX V18: Guardar datos en pedidoActivo ANTES de abrir modal
+  // ========================================
+  pedidoActivo = {
+    id: mesaSeleccionada.idPedidoActivo,
+    tipo: 'mesa',
+    mesa: mesaSeleccionada
+  };
+  tipoPedidoActual = 'mesa';
+
+  console.log('cobrarMesa() - pedidoActivo asignado:', pedidoActivo.id);
+
+  document.getElementById('cobrarMesaNombre').textContent = mesaSeleccionada.nombre;
+  var mon = configuracion.moneda || '$';
+  totalActualCobro = mesaSeleccionada.totalConsumo || 0;
+
+  document.getElementById('cobrarSubtotal').textContent = mon + formatearPrecio(totalActualCobro);
+  document.getElementById('cobrarDescuento').textContent = '-' + mon + '0';
+  document.getElementById('cobrarTotal').textContent = mon + formatearPrecio(totalActualCobro);
+  document.getElementById('rowFeeServicio').style.display = 'none';
+
+  generarBotonesEfectivo(totalActualCobro);
+  metodoPagoSeleccionado = 'Efectivo';
+
+  var mets = document.querySelectorAll('.metodo-btn');
+  for(var i = 0; i < mets.length; i++) {
+    mets[i].classList.remove('active');
+    if(i === 0) mets[i].classList.add('active');
+  }
+
+  document.getElementById('calculadoraEfectivo').style.display = 'block';
+
+  // ========================================
+  // FIX V18: Vincular ID del pedido directamente al boton DOM
+  // ========================================
+  var btnConfirmar = document.querySelector('.btn-confirmar-pago');
+  if (btnConfirmar) {
+    btnConfirmar.setAttribute('data-id-pedido', mesaSeleccionada.idPedidoActivo || '');
+    btnConfirmar.setAttribute('data-id-mesa', mesaSeleccionada.id || '');
+    btnConfirmar.setAttribute('data-tipo-pedido', 'mesa');
+    console.log('Data attributes escritos en boton:', {
+      idPedido: mesaSeleccionada.idPedidoActivo,
+      idMesa: mesaSeleccionada.id,
+      tipo: 'mesa'
+    });
+  }
+
+  cerrarModal('modalGestionarMesa');
+  abrirModal('modalCobrar');
+}
+
+// ============================================
+// ABRIR MODAL COBRAR - V18 FIX CONCURRENCIA
+// Para Domicilio y Pedido Rapido
+// ============================================
+function abrirModalCobrar(){
+  if(!pedidoActivo){
+    mostrarToast('error','Error','Sin pedido activo');
+    return;
+  }
+
+  console.log('abrirModalCobrar() - pedidoActivo:', pedidoActivo.id, 'tipo:', tipoPedidoActual);
+
+  var mon = configuracion.moneda || '$';
+  document.getElementById('cobrarMesaNombre').textContent = tipoPedidoActual === 'domicilio' ? 'Domicilio' : 'Pedido Rapido';
+
+  // Calcular total
+  var tc = 0;
+
+  // Primero intentar usar el total guardado
+  if(pedidoActivo.totalCalculado && pedidoActivo.totalCalculado > 0) {
+    tc = pedidoActivo.totalCalculado;
+    console.log('Usando total guardado:', tc);
+  }
+  // Si no hay total guardado, calcular del carrito
+  else if(carritoPOS.length > 0) {
+    for(var i = 0; i < carritoPOS.length; i++){
+      tc += carritoPOS[i].subtotal;
+    }
+    console.log('Calculado del carrito:', tc);
+  }
+  // Si tampoco hay carrito, usar totalCarritoEnviado
+  else if(totalCarritoEnviado > 0) {
+    tc = totalCarritoEnviado;
+    console.log('Usando totalCarritoEnviado:', tc);
+  }
+
+  totalActualCobro = tc;
+  console.log('Total final para cobro:', totalActualCobro);
+
+  document.getElementById('cobrarSubtotal').textContent = mon + formatearPrecio(tc);
+  document.getElementById('cobrarDescuento').textContent = '-' + mon + '0';
+  document.getElementById('cobrarTotal').textContent = mon + formatearPrecio(tc);
+  document.getElementById('rowFeeServicio').style.display = 'none';
+
+  generarBotonesEfectivo(tc);
+  metodoPagoSeleccionado = 'Efectivo';
+
+  var mets = document.querySelectorAll('.metodo-btn');
+  for(var j = 0; j < mets.length; j++){
+    mets[j].classList.remove('active');
+    if(j === 0) mets[j].classList.add('active');
+  }
+
+  document.getElementById('calculadoraEfectivo').style.display = 'block';
+
+  // ========================================
+  // FIX V18: Vincular ID del pedido directamente al boton DOM
+  // ========================================
+  var btnConfirmar = document.querySelector('.btn-confirmar-pago');
+  if (btnConfirmar) {
+    btnConfirmar.setAttribute('data-id-pedido', pedidoActivo.id || '');
+    btnConfirmar.setAttribute('data-id-mesa', '');  // Vacio para domicilio/rapido
+    btnConfirmar.setAttribute('data-tipo-pedido', tipoPedidoActual || 'rapido');
+    console.log('Data attributes escritos en boton (dom/rapido):', {
+      idPedido: pedidoActivo.id,
+      tipo: tipoPedidoActual
+    });
+  }
+
+  cerrarModal('modalPOS');
+  abrirModal('modalCobrar');
+}
+
+function seleccionarMetodoPago(met,el) {
+  metodoPagoSeleccionado=met;
+  var mets=document.querySelectorAll('.metodo-btn');for(var i=0;i<mets.length;i++)mets[i].classList.remove('active');
+  el.classList.add('active');
+  var mon=configuracion.moneda||'$';
+  var fee=document.getElementById('rowFeeServicio');
+  var tot=document.getElementById('cobrarTotal');
+  if(met==='Transferencia'){fee.style.display='flex';tot.textContent=mon+formatearPrecio(totalActualCobro+1000);}
+  else{fee.style.display='none';tot.textContent=mon+formatearPrecio(totalActualCobro);}
+  document.getElementById('calculadoraEfectivo').style.display=met==='Efectivo'?'block':'none';
+}
+
+function generarBotonesEfectivo(total) {
+  var c=document.getElementById('efectivoBotones');
+  var mon=configuracion.moneda||'$';
+  var dens=[10000,20000,50000,100000];
+  var html='<button type="button" class="active" onclick="seleccionarEfectivo('+total+',this)">'+mon+formatearPrecio(total)+' Exacto</button>';
+  for(var i=0;i<dens.length;i++){if(dens[i]>=total)html+='<button type="button" onclick="seleccionarEfectivo('+dens[i]+',this)">'+mon+formatearPrecio(dens[i])+'</button>';}
+  c.innerHTML=html;
+  document.getElementById('efectivoCustom').value=total;
+}
+
+function seleccionarEfectivo(m,el) {
+  var bs=document.querySelectorAll('.efectivo-botones button');for(var i=0;i<bs.length;i++)bs[i].classList.remove('active');
+  if(el)el.classList.add('active');
+  document.getElementById('efectivoCustom').value=m;
+  calcularDevuelta();
+}
+
+function calcularDevuelta() {
+  var ef=parseFloat(document.getElementById('efectivoCustom').value)||0;
+  var tot=totalActualCobro;if(metodoPagoSeleccionado==='Transferencia')tot+=1000;
+  var dc=document.getElementById('devueltaContainer');
+  var md=document.getElementById('montoDevuelta');
+  var mon=configuracion.moneda||'$';
+  if(ef>=tot){dc.style.display='flex';md.textContent=mon+formatearPrecio(ef-tot);}else{dc.style.display='none';}
+}
+
+// ============================================
+// CONFIRMAR PAGO - V18 FIX CONCURRENCIA BLINDADO
+// ============================================
+function confirmarPago() {
+  var btnConfirmar = document.querySelector('.btn-confirmar-pago');
+
+  // ========================================
+  // FIX V18 PASO 1: Leer datos del DOM como fuente de verdad
+  // ========================================
+  var idPedidoDOM = btnConfirmar ? btnConfirmar.getAttribute('data-id-pedido') : null;
+  var idMesaDOM = btnConfirmar ? btnConfirmar.getAttribute('data-id-mesa') : null;
+  var tipoPedidoDOM = btnConfirmar ? btnConfirmar.getAttribute('data-tipo-pedido') : null;
+
+  console.log('confirmarPago() - Leyendo data-attributes:', {
+    idPedidoDOM: idPedidoDOM,
+    idMesaDOM: idMesaDOM,
+    tipoPedidoDOM: tipoPedidoDOM
+  });
+
+  // ========================================
+  // FIX V18 PASO 2: Determinar el tipo de flujo
+  // Prioridad: 1) data-attribute, 2) variable global
+  // ========================================
+  var tipoFlujoFinal = tipoPedidoDOM || tipoPedidoActual;
+  var idMesaFinal = idMesaDOM || (mesaSeleccionada ? mesaSeleccionada.id : null);
+  var idPedidoFinal = idPedidoDOM || (pedidoActivo ? pedidoActivo.id : null);
+
+  console.log('Flujo determinado:', {
+    tipo: tipoFlujoFinal,
+    idMesa: idMesaFinal,
+    idPedido: idPedidoFinal
+  });
+
+  // ========================================
+  // Validacion inicial
+  // ========================================
+  if (!idPedidoFinal && tipoFlujoFinal !== 'mesa') {
+    mostrarToast('error', 'Error', 'No hay pedido activo para procesar');
+    return;
+  }
+
+  if (tipoFlujoFinal === 'mesa' && !idMesaFinal) {
+    mostrarToast('error', 'Error', 'No hay mesa seleccionada');
+    return;
+  }
+
+  // Evitar doble click
+  if (btnConfirmar) {
+    btnConfirmar.disabled = true;
+    btnConfirmar.style.opacity = '0.6';
+  }
+
+  mostrarLoading(true, 'Procesando pago...');
+
+  var totFin = totalActualCobro;
+  if (metodoPagoSeleccionado === 'Transferencia') totFin += 1000;
+
+  // Timeout de seguridad - 25 segundos maximo
+  var timeoutId = setTimeout(function() {
+    console.log('Timeout alcanzado - Cerrando loading');
+    mostrarLoading(false);
+    if (btnConfirmar) {
+      btnConfirmar.disabled = false;
+      btnConfirmar.style.opacity = '1';
+    }
+    mostrarToast('warning', 'Tiempo agotado', 'La operacion tardo demasiado. Verifique si la mesa se cerro correctamente.');
+    setTimeout(function() {
+      cargarDatosIniciales();
+    }, 1000);
+  }, 25000);
+
+  // ========================================
+  // FLUJO MESA
+  // ========================================
+  if (tipoFlujoFinal === 'mesa' && idMesaFinal) {
+
+    // Obtener nombre de mesa para el mensaje de exito
+    var nombreMesaActual = 'Mesa';
+    for (var m = 0; m < mesas.length; m++) {
+      if (mesas[m].id === idMesaFinal) {
+        nombreMesaActual = mesas[m].nombre;
+        break;
+      }
+    }
+
+    console.log('Ejecutando cerrarMesa para:', idMesaFinal);
+
+    google.script.run
+      .withSuccessHandler(function(r) {
+        clearTimeout(timeoutId);
+        mostrarLoading(false);
+
+        if (btnConfirmar) {
+          btnConfirmar.disabled = false;
+          btnConfirmar.style.opacity = '1';
+          // Limpiar data-attributes despues del exito
+          btnConfirmar.removeAttribute('data-id-pedido');
+          btnConfirmar.removeAttribute('data-id-mesa');
+          btnConfirmar.removeAttribute('data-tipo-pedido');
+        }
+
+        console.log('Respuesta cerrarMesa:', r);
+
+        if (r && r.success) {
+          cerrarModal('modalCobrar');
+
+          // Actualizar estado local de la mesa usando idMesaFinal (del DOM)
+          for (var i = 0; i < mesas.length; i++) {
+            if (mesas[i].id === idMesaFinal) {
+              mesas[i].estado = 'Libre';
+              mesas[i].idPedidoActivo = '';
+              mesas[i].horaOcupacion = null;
+              mesas[i].totalConsumo = 0;
+              mesas[i].meseroAsignado = '';
+              break;
+            }
+          }
+
+          ultimoPedidoExitoso = {
+            id: r.idPedido || idPedidoFinal || 'N/A',
+            total: totFin,
+            tipo: 'mesa',
+            mesa: nombreMesaActual
+          };
+
+          // Limpiar variables globales DESPUES del exito
+          mesaSeleccionada = null;
+          pedidoActivo = null;
+          tipoPedidoActual = null;
+
+          renderizarMesas();
+          actualizarMetricas();
+          mostrarModalExito();
+
+        } else {
+          var errorMsg = (r && r.message) ? r.message : 'Error desconocido';
+          console.error('Error:', errorMsg);
+          mostrarToast('error', 'Error', errorMsg);
+
+          setTimeout(function() {
+            cargarDatosIniciales();
+          }, 1500);
+        }
+      })
+      .withFailureHandler(function(error) {
+        clearTimeout(timeoutId);
+        mostrarLoading(false);
+
+        if (btnConfirmar) {
+          btnConfirmar.disabled = false;
+          btnConfirmar.style.opacity = '1';
+        }
+
+        console.error('Error de conexion:', error);
+        mostrarToast('error', 'Error de conexion', 'No se pudo conectar con el servidor');
+
+        setTimeout(function() {
+          cargarDatosIniciales();
+        }, 1500);
+      })
+      .cerrarMesa(idMesaFinal, {
+        metodoPago: metodoPagoSeleccionado,
+        meseroId: usuarioMesero ? usuarioMesero.id : '',
+        meseroNombre: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
+      });
+
+  }
+  // ========================================
+  // FLUJO DOMICILIO / PEDIDO RAPIDO
+  // ========================================
+  else if (idPedidoFinal) {
+
+    var clienteActual = pedidoActivo ? (pedidoActivo.cliente || {}) : {};
+
+    console.log('Ejecutando finalizarPedido para:', idPedidoFinal);
+
+    google.script.run
+      .withSuccessHandler(function(r) {
+        clearTimeout(timeoutId);
+        mostrarLoading(false);
+
+        if (btnConfirmar) {
+          btnConfirmar.disabled = false;
+          btnConfirmar.style.opacity = '1';
+          // Limpiar data-attributes despues del exito
+          btnConfirmar.removeAttribute('data-id-pedido');
+          btnConfirmar.removeAttribute('data-id-mesa');
+          btnConfirmar.removeAttribute('data-tipo-pedido');
+        }
+
+        console.log('Respuesta finalizarPedido:', r);
+
+        if (r && r.success) {
+          cerrarModal('modalCobrar');
+
+          ultimoPedidoExitoso = {
+            id: idPedidoFinal,
+            total: totFin,
+            tipo: tipoFlujoFinal,
+            cliente: clienteActual
+          };
+
+          // Limpiar variables DESPUES del exito
+          carritoPOS = [];
+          totalCarritoEnviado = 0;
+          pedidoActivo = null;
+          tipoPedidoActual = null;
+
+          mostrarModalExito();
+
+        } else {
+          var errorMsg = (r && r.message) ? r.message : 'Error desconocido';
+          console.error('Error:', errorMsg);
+          mostrarToast('error', 'Error', errorMsg);
+        }
+      })
+      .withFailureHandler(function(error) {
+        clearTimeout(timeoutId);
+        mostrarLoading(false);
+
+        if (btnConfirmar) {
+          btnConfirmar.disabled = false;
+          btnConfirmar.style.opacity = '1';
+        }
+
+        console.error('Error de conexion:', error);
+        mostrarToast('error', 'Error de conexion', 'No se pudo conectar');
+      })
+      .finalizarPedido(idPedidoFinal, {
+        metodoPago: metodoPagoSeleccionado,
+        cerrar: true,
+        meseroId: usuarioMesero ? usuarioMesero.id : '',
+        meseroNombre: usuarioMesero ? usuarioMesero.nombre : 'Mesero'
+      });
+
+  } else {
+    // Sin mesa ni pedido activo
+    clearTimeout(timeoutId);
+    mostrarLoading(false);
+
+    if (btnConfirmar) {
+      btnConfirmar.disabled = false;
+      btnConfirmar.style.opacity = '1';
+    }
+
+    console.error('No se encontro ID de pedido ni en DOM ni en variables globales');
+    mostrarToast('error', 'Error', 'No hay pedido activo para procesar');
+  }
+}
+
+// ============================================
+// DOMICILIO
+// ============================================
+function abrirModalDomicilio() {
+  document.getElementById('domNombre').value='';
+  document.getElementById('domCelular').value='';
+  document.getElementById('domDireccion').value='';
+  document.getElementById('domNotas').value='';
+  abrirModal('modalDomicilio');
+}
+
+function buscarClientePorCelularInput() {
+  var cel=document.getElementById('domCelular').value.trim();
+  if(cel.length<7)return;
+  google.script.run.withSuccessHandler(function(r){
+    if(r&&r.encontrado){
+      document.getElementById('domNombre').value=r.nombre||'';
+      document.getElementById('domDireccion').value=r.direccion||'';
+      document.getElementById('domNotas').value=r.notas||'';
+      mostrarToast('info','Cliente encontrado',r.nombre);
+    }
+  }).buscarClientePorCelular(cel);
+}
+
+function buscarClienteAutocompletar() {
+  var t=document.getElementById('domNombre').value;
+  if(t.length<2){document.getElementById('autocompleteClientes').style.display='none';return;}
+  google.script.run.withSuccessHandler(function(r){
+    var c=document.getElementById('autocompleteClientes');
+    if(r&&r.success&&r.clientes&&r.clientes.length>0){
+      var html='';for(var i=0;i<r.clientes.length;i++){var cl=r.clientes[i];html+='<div class="autocomplete-item" onclick="seleccionarClienteDom(\''+cl.nombre+'\',\''+cl.celular+'\',\''+cl.direccion+'\')"><strong>'+cl.nombre+'</strong><br><small>'+cl.celular+'</small></div>';}
+      c.innerHTML=html;c.style.display='block';
+    }else{c.style.display='none';}
+  }).buscarClienteDomicilio(t);
+}
+
+function seleccionarClienteDom(n,c,d){document.getElementById('domNombre').value=n;document.getElementById('domCelular').value=c;document.getElementById('domDireccion').value=d;document.getElementById('autocompleteClientes').style.display='none';}
+
+function crearPedidoDomicilio() {
+  var nom=document.getElementById('domNombre').value.trim();
+  var cel=document.getElementById('domCelular').value.trim();
+  var dir=document.getElementById('domDireccion').value.trim();
+  var not=document.getElementById('domNotas').value.trim();
+  if(!nom||!cel||!dir){mostrarToast('warning','Incompleto','Nombre, celular y direccion requeridos');return;}
+  mostrarLoading(true,'Creando...');
+
+  google.script.run.withSuccessHandler(function(r){
+    mostrarLoading(false);
+    if(r&&r.success){
+      cerrarModal('modalDomicilio');mostrarToast('success','Creado!','ID: '+r.idPedido);
+      tipoPedidoActual='domicilio';
+      pedidoActivo={id:r.idPedido,tipo:'domicilio',cliente:{nombre:nom,celular:cel,direccion:dir,notas:not},totalCalculado:0};
+      document.getElementById('posTitulo').textContent='Domicilio';
+      document.getElementById('posDestino').textContent=nom;
+      carritoPOS=[];
+      totalCarritoEnviado=0;
+      renderizarCarritoPOS();renderizarCategoriasPOS();renderizarProductosPOS('TODOS');
+      abrirModal('modalPOS');
+    }else{mostrarToast('error','Error',r.message||'Fallo');}
+  }).withFailureHandler(function(){mostrarLoading(false);mostrarToast('error','Error','Conexion');}).crearPedidoDomicilio({nombre:nom,celular:cel,direccion:dir,notas:not},{id:usuarioMesero.id,nombre:usuarioMesero.nombre});
+}
+
+// ============================================
+// PEDIDO RAPIDO
+// ============================================
+function abrirModalPedidoRapido(){document.getElementById('rapidoCliente').value='';abrirModal('modalPedidoRapido');}
+
+function crearPedidoRapido() {
+  var cli=document.getElementById('rapidoCliente').value.trim();
+  mostrarLoading(true,'Creando...');
+
+  google.script.run.withSuccessHandler(function(r){
+    mostrarLoading(false);
+    if(r&&r.success){
+      cerrarModal('modalPedidoRapido');mostrarToast('success','Creado!','ID: '+r.idPedido);
+      tipoPedidoActual='rapido';
+      pedidoActivo={id:r.idPedido,tipo:'rapido',cliente:cli||'Mostrador',totalCalculado:0};
+      document.getElementById('posTitulo').textContent='Pedido Rapido';
+      document.getElementById('posDestino').textContent=cli||'Mostrador';
+      carritoPOS=[];
+      totalCarritoEnviado=0;
+      renderizarCarritoPOS();renderizarCategoriasPOS();renderizarProductosPOS('TODOS');
+      abrirModal('modalPOS');
+    }else{mostrarToast('error','Error',r.message||'Fallo');}
+  }).withFailureHandler(function(){mostrarLoading(false);mostrarToast('error','Error','Conexion');}).crearPedidoRapido({id:usuarioMesero.id,nombre:usuarioMesero.nombre});
+}
+
+// ============================================
+// MODAL EXITO
+// ============================================
+function mostrarModalExito() {
+  if(!ultimoPedidoExitoso)return;
+  var mon=configuracion.moneda||'$';
+  document.getElementById('exitoIdPedido').textContent=ultimoPedidoExitoso.id;
+  document.getElementById('exitoTotal').textContent='Total: '+mon+formatearPrecio(ultimoPedidoExitoso.total);
+  document.getElementById('exitoMensaje').textContent=ultimoPedidoExitoso.tipo==='mesa'?ultimoPedidoExitoso.mesa+' cerrada':'Pedido procesado';
+  document.getElementById('btnWhatsApp').style.display=ultimoPedidoExitoso.tipo==='domicilio'?'inline-flex':'none';
+  abrirModal('modalExito');
+}
+
+function cerrarModalExito() {
+  cerrarModal('modalExito');
+  ultimoPedidoExitoso = null;
+  pedidoActivo = null;
+  tipoPedidoActual = null;
+  mesaSeleccionada = null;
+  carritoPOS = [];
+  totalCarritoEnviado = 0;
+  totalActualCobro = 0;
+  renderizarMesas();
+  actualizarMetricas();
+}
+
+// ============================================
+// FUNCION imprimirComanda() - V16
+// ============================================
+function imprimirComanda(pedido) {
+  // CORRECCION V14.1: Si no se pasa pedido, construirlo desde ultimoPedidoExitoso
+  if (!pedido) {
+    if (!ultimoPedidoExitoso) {
+      mostrarToast('error', 'Error', 'No hay pedido para imprimir');
+      console.error('imprimirComanda: No hay ultimoPedidoExitoso');
+      return;
+    }
+
+    // Construir objeto pedido desde ultimoPedidoExitoso
+    pedido = {
+      id: ultimoPedidoExitoso.id,
+      tipo: ultimoPedidoExitoso.tipo,
+      total: ultimoPedidoExitoso.total,
+      mesa: ultimoPedidoExitoso.mesa || '',
+      cliente: ultimoPedidoExitoso.cliente || {},
+      metodoPago: metodoPagoSeleccionado || 'Efectivo',
+      atendidoPor: usuarioMesero ? usuarioMesero.nombre : 'Mesero',
+      fecha: new Date().toISOString(),
+      items: ultimoPedidoExitoso.items || [] // Los items pueden estar vacios aqui
+    };
+
+    console.log('Construyendo pedido desde ultimoPedidoExitoso:', pedido);
+
+    // Si no hay items, cargarlos del backend
+    if (!pedido.items || pedido.items.length === 0) {
+      mostrarLoading(true, 'Cargando ticket...');
+
+      google.script.run
+        .withSuccessHandler(function(resultado) {
+          mostrarLoading(false);
+          if (resultado && resultado.success && resultado.items) {
+            pedido.items = resultado.items;
+            // Calcular subtotal de items
+            var subtotalCalculado = 0;
+            for (var i = 0; i < resultado.items.length; i++) {
+              subtotalCalculado += resultado.items[i].subtotalItem || 0;
+            }
+            pedido.subtotal = subtotalCalculado;
+
+            console.log('Items cargados:', resultado.items.length);
+            // Ahora si imprimir con los items
+            generarYMostrarTicket(pedido);
+          } else {
+            console.log('Sin items, imprimiendo sin detalle');
+            generarYMostrarTicket(pedido);
+          }
+        })
+        .withFailureHandler(function(error) {
+          mostrarLoading(false);
+          console.error('Error cargando items:', error);
+          // Imprimir de todas formas sin items
+          generarYMostrarTicket(pedido);
+        })
+        .obtenerItemsPedidoMesero(pedido.id);
+
+      return; // Salir, el callback continuara
+    }
+  }
+
+  // Si ya tiene items, imprimir directamente
+  generarYMostrarTicket(pedido);
+}
+
+// ============================================
+// FUNCION AUXILIAR: Generar y mostrar ticket
+// ============================================
+function generarYMostrarTicket(pedido) {
+  var config = configuracion || {};
+  var moneda = config.moneda || '$';
+  var nombreEmpresa = config.nombreEmpresa || 'CloudPyme';
+  var nit = config.nit || '1006.170.129';
+  var direccionEmpresa = config.direccion || '';
+  var telefonoEmpresa = config.telefono || '';
+
+  // Datos del pedido
+  var idPedido = pedido.id || pedido.idPedido || 'N/A';
+  var fecha = pedido.fecha || new Date().toLocaleString('es-CO');
+  var atendidoPor = pedido.atendidoPor || (usuarioMesero ? usuarioMesero.nombre : 'Mesero');
+  var estado = pedido.estado || 'Entregado';
+  var origen = String(pedido.tipo || pedido.origen || 'rapido').toLowerCase();
+  var metodoPago = pedido.metodoPago || metodoPagoSeleccionado || 'Efectivo';
+
+  // Datos segun tipo
+  var numeroMesa = pedido.mesa || pedido.numeroMesa || '';
+  var nombreCliente = '';
+  var telefono = '';
+  var direccion = '';
+
+  if (pedido.cliente && typeof pedido.cliente === 'object') {
+    nombreCliente = pedido.cliente.nombre || '';
+    telefono = pedido.cliente.celular || pedido.cliente.telefono || '';
+    direccion = pedido.cliente.direccion || '';
+  } else if (typeof pedido.cliente === 'string') {
+    nombreCliente = pedido.cliente;
+  }
+
+  // Totales
+  var subtotal = parseFloat(pedido.subtotal) || parseFloat(pedido.total) || 0;
+  var descuento = parseFloat(pedido.descuento) || 0;
+  var feeTransferencia = (metodoPago === 'Transferencia') ? 1000 : 0;
+  var total = parseFloat(pedido.total) || (subtotal - descuento + feeTransferencia);
+
+  var items = pedido.items || [];
+
+  // Funcion formatear precio
+  function formatPrecio(num) {
+    return moneda + parseFloat(num || 0).toLocaleString('es-CO', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
+  }
+
+  // Funcion formatear fecha
+  function formatFecha(fechaStr) {
+    try {
+      var d = new Date(fechaStr);
+      if (isNaN(d.getTime())) return String(fechaStr);
+      var dia = String(d.getDate()).padStart(2, '0');
+      var mes = String(d.getMonth() + 1).padStart(2, '0');
+      var anio = d.getFullYear();
+      var hora = String(d.getHours()).padStart(2, '0');
+      var min = String(d.getMinutes()).padStart(2, '0');
+      return dia + '/' + mes + '/' + anio + ' ' + hora + ':' + min;
+    } catch (e) {
+      return String(fechaStr);
+    }
+  }
+
+  // Seccion contexto dinamico
+  var seccionContexto = '';
+
+  if (origen.indexOf('mesa') !== -1 || numeroMesa) {
+    seccionContexto = '<div style="text-align:center; margin:15px 0; padding:10px 0; border-top:1px dashed #000; border-bottom:1px dashed #000;">' +
+      '<div style="font-size:28px; font-weight:bold;">MESA</div>' +
+      '<div style="font-size:48px; font-weight:bold;">' + (numeroMesa || 'N/A') + '</div>' +
+      '</div>';
+  } else if (origen.indexOf('domicilio') !== -1) {
+    seccionContexto = '<div style="margin:10px 0; padding:10px 0; border-top:1px dashed #000; border-bottom:1px dashed #000;">' +
+      '<div style="text-align:center; font-size:18px; font-weight:bold; margin-bottom:8px;">DOMICILIO</div>' +
+      '<div style="font-size:12px;"><strong>Cliente:</strong> ' + (nombreCliente || 'N/A') + '</div>' +
+      '<div style="font-size:12px;"><strong>Tel:</strong> ' + (telefono || 'N/A') + '</div>' +
+      '<div style="font-size:13px; padding:5px; background:#f0f0f0; margin-top:5px;"><strong>Dir:</strong> ' + (direccion || 'N/A') + '</div>' +
+      '</div>';
+  } else {
+    seccionContexto = '<div style="text-align:center; margin:15px 0; padding:15px 0; border-top:1px dashed #000; border-bottom:1px dashed #000;">' +
+      '<div style="font-size:22px; font-weight:bold;">PARA LLEVAR</div>' +
+      '<div style="font-size:14px; color:#666;">MOSTRADOR</div>' +
+      '</div>';
+  }
+
+  // Items HTML
+  var itemsHTML = '';
+  if (items.length > 0) {
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var cantidad = item.cantidad || 1;
+      var nombre = item.nombreProducto || item.nombre || 'Producto';
+      var precioItem = parseFloat(item.subtotalItem || item.subtotal || 0);
+      var adiciones = item.adiciones || '';
+
+      itemsHTML += '<tr>' +
+        '<td style="padding:5px 2px; text-align:center; font-size:13px; font-weight:bold;">' + cantidad + '</td>' +
+        '<td style="padding:5px 2px; font-size:12px;">' + nombre +
+        (adiciones ? '<div style="font-size:10px; color:#555;">+ ' + adiciones + '</div>' : '') +
+        '</td>' +
+        '<td style="padding:5px 2px; text-align:right; font-size:12px;">' + formatPrecio(precioItem) + '</td>' +
+        '</tr>';
+    }
+  } else {
+    itemsHTML = '<tr><td colspan="3" style="text-align:center; padding:15px; color:#999;">Sin detalle de items</td></tr>';
+  }
+
+  // Totales HTML
+  var totalesHTML = '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #000;">' +
+    '<div style="display:flex; justify-content:space-between; font-size:12px;"><span>Subtotal:</span><span>' + formatPrecio(subtotal) + '</span></div>';
+
+  if (descuento > 0) {
+    totalesHTML += '<div style="display:flex; justify-content:space-between; font-size:12px; color:#28a745;"><span>Descuento:</span><span>-' + formatPrecio(descuento) + '</span></div>';
+  }
+
+  if (feeTransferencia > 0) {
+    totalesHTML += '<div style="display:flex; justify-content:space-between; font-size:12px; color:#dc3545;"><span>Fee Transferencia:</span><span>+' + formatPrecio(feeTransferencia) + '</span></div>';
+  }
+
+  totalesHTML += '<div style="display:flex; justify-content:space-between; font-size:18px; font-weight:bold; margin-top:8px; padding-top:5px; border-top:1px solid #000;">' +
+    '<span>TOTAL:</span><span>' + formatPrecio(total) + '</span></div>' +
+    '<div style="text-align:right; font-size:11px; color:#666; margin-top:5px;">Pago: <strong>' + metodoPago + '</strong></div>' +
+    '</div>';
+
+  // HTML completo
+  var ticketHTML = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ticket ' + idPedido + '</title>' +
+    '<style>@page{size:80mm auto;margin:0}@media print{body{width:80mm;margin:0;padding:0}}' +
+    '*{margin:0;padding:0;box-sizing:border-box;font-family:"Courier New",Courier,monospace}' +
+    'body{width:80mm;max-width:80mm;padding:5mm;background:#fff;color:#000}</style></head><body>' +
+    '<div style="text-align:center; margin-bottom:10px;">' +
+    '<div style="font-size:20px; font-weight:bold;">' + nombreEmpresa + '</div>' +
+    '<div style="font-size:10px; color:#555;">NIT: ' + nit + '</div>' +
+    (direccionEmpresa ? '<div style="font-size:9px; color:#666;">' + direccionEmpresa + '</div>' : '') +
+    (telefonoEmpresa ? '<div style="font-size:9px; color:#666;">Tel: ' + telefonoEmpresa + '</div>' : '') +
+    '</div>' +
+    '<div style="border-top:1px dashed #000; border-bottom:1px dashed #000; padding:8px 0;">' +
+    '<div style="display:flex; justify-content:space-between; font-size:11px;"><span><strong>Pedido:</strong></span><span>' + idPedido + '</span></div>' +
+    '<div style="display:flex; justify-content:space-between; font-size:11px;"><span><strong>Fecha:</strong></span><span>' + formatFecha(fecha) + '</span></div>' +
+    '<div style="display:flex; justify-content:space-between; font-size:11px;"><span><strong>Atendio:</strong></span><span>' + atendidoPor + '</span></div>' +
+    '<div style="display:flex; justify-content:space-between; font-size:11px;"><span><strong>Estado:</strong></span><span style="font-weight:bold;">' + estado + '</span></div>' +
+    '</div>' +
+    seccionContexto +
+    '<table style="width:100%; border-collapse:collapse; margin:10px 0;">' +
+    '<thead><tr style="border-bottom:1px solid #000;">' +
+    '<th style="padding:5px 2px; text-align:center; font-size:11px; width:15%;">Cant.</th>' +
+    '<th style="padding:5px 2px; text-align:left; font-size:11px;">Descripcion</th>' +
+    '<th style="padding:5px 2px; text-align:right; font-size:11px; width:25%;">Total</th>' +
+    '</tr></thead><tbody>' + itemsHTML + '</tbody></table>' +
+    totalesHTML +
+    '<div style="text-align:center; margin-top:15px; padding-top:10px; border-top:1px dashed #000;">' +
+    '<div style="font-size:12px; font-weight:bold;">Gracias por su compra!</div>' +
+    '<div style="font-size:9px; color:#888; margin-top:5px;">' + nombreEmpresa + ' - Sistema POS</div>' +
+    '</div>' +
+    '<div style="height:20mm;"></div>' +
+    '</body></html>';
+
+  // Abrir ventana e imprimir
+  try {
+    var ventana = window.open('', '_blank', 'width=320,height=600,scrollbars=yes,resizable=yes');
+
+    if (!ventana) {
+      alert('No se pudo abrir la ventana de impresion.\nVerifica que los pop-ups esten permitidos.');
+      return;
+    }
+
+    ventana.document.write(ticketHTML);
+    ventana.document.close();
+
+    setTimeout(function() {
+      ventana.focus();
+      ventana.print();
+    }, 300);
+
+    console.log('Ticket generado para pedido:', idPedido);
+    mostrarToast('success', 'Ticket', 'Generando impresion...');
+
+  } catch (error) {
+    console.error('Error al generar ticket:', error);
+    mostrarToast('error', 'Error', 'No se pudo generar el ticket');
+  }
+}
+
+
+function enviarWhatsApp() {
+  if(!ultimoPedidoExitoso||ultimoPedidoExitoso.tipo!=='domicilio')return;
+  mostrarLoading(true,'Generando...');
+  google.script.run.withSuccessHandler(function(r){
+    mostrarLoading(false);
+    if(r&&r.success&&r.urlWhatsApp){window.open(r.urlWhatsApp,'_blank');mostrarToast('success','WhatsApp','Abriendo...');}
+    else{mostrarToast('error','Error','No se pudo generar');}
+  }).withFailureHandler(function(){mostrarLoading(false);mostrarToast('error','Error','Conexion');}).generarMensajeWhatsApp(ultimoPedidoExitoso.id);
+}
+
+// ============================================
+// UTILIDADES
+// ============================================
+function formatearPrecio(p){return parseFloat(p||0).toLocaleString('es-CO',{minimumFractionDigits:0,maximumFractionDigits:0});}
+function abrirModal(id){var m=document.getElementById(id);if(m)m.classList.add('show');}
+
+// V18.1 SYNC: cerrarModal modificado para detener polling
+function cerrarModal(id){
+  var m=document.getElementById(id);
+  if(m)m.classList.remove('show');
+
+  // Si cerramos el modal de gestion de mesa, detener sincronizacion
+  if(id === 'modalGestionarMesa') {
+    detenerSyncBadgeCocina();
+    estadoAnteriorCocina = null;
+  }
+}
+
+function mostrarLoading(show,txt) {
+  var o=document.getElementById('loadingOverlay');
+  var t=document.getElementById('loadingText');
+  if(o){if(show){o.classList.add('show');if(t&&txt)t.textContent=txt;}else{o.classList.remove('show');}}
+}
+
+function mostrarToast(tipo,titulo,msg) {
+  var c=document.getElementById('toastContainer');if(!c)return;
+  var icons={'success':'[OK]','error':'[X]','warning':'[!]','info':'[i]'};
+  var t=document.createElement('div');
+  t.className='toast toast-'+tipo;
+  t.innerHTML='<span class="toast-icon">'+icons[tipo]+'</span><div class="toast-content"><div class="toast-title">'+titulo+'</div><div class="toast-message">'+msg+'</div></div>';
+  c.appendChild(t);
+  setTimeout(function(){t.classList.add('toast-out');setTimeout(function(){t.remove();},300);},3500);
+}
+
+// Cerrar modales click fuera
+document.addEventListener('click',function(e){if(e.target.classList.contains('modal'))e.target.classList.remove('show');});
+document.addEventListener('click',function(e){if(!e.target.closest('.form-group')){var ac=document.getElementById('autocompleteClientes');if(ac)ac.style.display='none';}});
+
+
+// ============================================
+// V18.1 - FUNCION: Generar Badge de Estado Cocina
+// SIN AUTO-REFRESH - Solo renderiza dato existente
+// ============================================
+function generarBadgeEstadoPedido(estado) {
+  // Normalizar estado
+  var est = (estado || 'Solicitado').trim();
+  var estLower = est.toLowerCase();
+
+  // Configuracion por defecto (Amarillo/Gris - Solicitado/En espera)
+  var colorFondo = '#FEF3C7';
+  var colorTexto = '#92400E';
+  var colorBorde = '#F59E0B';
+  var icono = '&#9203;'; // Reloj de arena (entidad HTML)
+  var texto = 'En espera';
+
+  // Determinar estado segun estadoLogistico
+  if (estLower === 'recibido' || estLower === 'en preparacion' || estLower === 'preparacion' || estLower === 'cocinando') {
+    // Azul - En Preparacion
+    colorFondo = '#DBEAFE';
+    colorTexto = '#1E40AF';
+    colorBorde = '#3B82F6';
+    icono = '&#128104;&#8205;&#127859;'; // Cocinero (entidad HTML compuesta)
+    texto = 'En Preparacion';
+  } else if (estLower === 'enviado' || estLower === 'entregado' || estLower === 'listo' || estLower === 'terminado') {
+    // Verde - Listo para entregar
+    colorFondo = '#DCFCE7';
+    colorTexto = '#166534';
+    colorBorde = '#22C55E';
+    icono = '&#10004;'; // Check mark (entidad HTML)
+    texto = 'Listo para entregar';
+  }
+  // Si es 'solicitado' o cualquier otro, mantiene el default amarillo
+
+  // Retornar HTML del badge con estilos inline
+  var badgeHTML = '<div id="badgeEstadoPedido" class="badge-estado-cocina" style="' +
+    'display:flex;' +
+    'align-items:center;' +
+    'justify-content:center;' +
+    'gap:8px;' +
+    'padding:10px 16px;' +
+    'margin:12px 0;' +
+    'border-radius:8px;' +
+    'font-size:14px;' +
+    'font-weight:600;' +
+    'background-color:' + colorFondo + ';' +
+    'color:' + colorTexto + ';' +
+    'border:2px solid ' + colorBorde + ';' +
+    '">' +
+    '<span style="font-size:18px;">' + icono + '</span>' +
+    '<span>Estado Cocina: ' + texto + '</span>' +
+    '</div>';
+
+  return badgeHTML;
+}
+
+console.log('JS-Meseros V18.1 SYNC cargado - Badge cocina con sincronizacion en tiempo real');
+</script>

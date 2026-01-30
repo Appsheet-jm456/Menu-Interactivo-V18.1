@@ -1,0 +1,973 @@
+<script>
+// ============================================
+// VARIABLES GLOBALES - DECLARADAS AL INICIO V16 FASE 8
+// ============================================
+let usuarioActual = null;
+let configuracion = {};
+let categorias = [];
+let productos = [];
+let carrito = [];
+let productoSeleccionado = null;
+let adicionesSeleccionadas = [];
+let vistaActual = 'grid';
+
+// ============================================
+// INICIALIZACIÓN
+// ============================================
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🚀 Aplicación iniciada');
+  cargarPreferenciaVista();
+  cargarConfiguracion();
+  cargarCarritoStorage();
+  verificarSesion();
+});
+
+function cargarPreferenciaVista() {
+  try {
+    const vistaGuardada = localStorage.getItem('vistaPreferida');
+    if (vistaGuardada && (vistaGuardada === 'grid' || vistaGuardada === 'list')) {
+      vistaActual = vistaGuardada;
+    }
+  } catch (error) {
+    vistaActual = 'grid';
+  }
+}
+
+function cargarConfiguracion() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        configuracion = result.config;
+        aplicarConfiguracion();
+      } else {
+        configuracion = { nombreEmpresa: 'Restaurante', colorPrimario: '#3B82F6', colorSecundario: '#1E40AF', colorAcento: '#F59E0B', moneda: '$', logoUrl: '' };
+        aplicarConfiguracion();
+      }
+    })
+    .withFailureHandler(function(error) {
+      configuracion = { nombreEmpresa: 'Restaurante', colorPrimario: '#3B82F6', colorSecundario: '#1E40AF', colorAcento: '#F59E0B', moneda: '$', logoUrl: '' };
+      aplicarConfiguracion();
+    })
+    .obtenerConfiguracion();
+}
+
+function aplicarConfiguracion() {
+  document.documentElement.style.setProperty('--color-primario', configuracion.colorPrimario || '#3B82F6');
+  document.documentElement.style.setProperty('--color-secundario', configuracion.colorSecundario || '#1E40AF');
+  document.documentElement.style.setProperty('--color-acento', configuracion.colorAcento || '#F59E0B');
+  
+  const logoUrl = configuracion.logoUrl || configuracion.logo || '';
+  if (logoUrl) {
+    const loginLogo = document.getElementById('loginLogo');
+    const headerLogo = document.getElementById('headerLogo');
+    if (loginLogo) { loginLogo.src = logoUrl; loginLogo.style.display = 'block'; }
+    if (headerLogo) { headerLogo.src = logoUrl; headerLogo.style.display = 'block'; }
+  }
+  
+  const nombreEmpresa = configuracion.nombreEmpresa || 'Restaurante';
+  const empresaNombreEl = document.getElementById('empresaNombre');
+  if (empresaNombreEl) empresaNombreEl.textContent = nombreEmpresa;
+  
+  const headerTitle = document.getElementById('headerTitle');
+  if (headerTitle) headerTitle.textContent = 'Menu ' + nombreEmpresa;
+  
+  const nit = configuracion.nit || '';
+  if (nit) {
+    const footer = document.getElementById('loginFooter');
+    if (footer) footer.textContent = 'NIT: ' + nit;
+  }
+}
+
+function verificarSesion() {
+  const sesionGuardada = localStorage.getItem('usuarioActual');
+  if (sesionGuardada) {
+    try {
+      usuarioActual = JSON.parse(sesionGuardada);
+      iniciarApp();
+    } catch (error) {
+      mostrarPantallaLogin();
+    }
+  } else {
+    mostrarPantallaLogin();
+  }
+}
+
+function mostrarPantallaLogin() {
+  const loginScreen = document.getElementById('loginScreen');
+  const menuScreen = document.getElementById('menuScreen');
+  const pedidosScreen = document.getElementById('pedidosScreen');
+  const carritoScreen = document.getElementById('carritoScreen');
+  const cuentaScreen = document.getElementById('cuentaScreen');
+  const bottomNav = document.getElementById('bottomNav');
+  
+  if (menuScreen) menuScreen.classList.remove('active');
+  if (pedidosScreen) pedidosScreen.classList.remove('active');
+  if (carritoScreen) carritoScreen.classList.remove('active');
+  if (cuentaScreen) cuentaScreen.classList.remove('active');
+  
+  if (loginScreen) { 
+    loginScreen.classList.add('active'); 
+    loginScreen.classList.remove('hidden'); 
+    loginScreen.style.display = 'flex'; 
+  }
+  
+  if (bottomNav) bottomNav.style.display = 'none';
+  window.scrollTo(0, 0);
+}
+
+// ============================================
+// AUTENTICACIÓN
+// ============================================
+function mostrarTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  if (event && event.target) event.target.classList.add('active');
+  
+  document.getElementById('loginForm').classList.remove('active');
+  document.getElementById('registroForm').classList.remove('active');
+  
+  if (tab === 'login') {
+    document.getElementById('loginForm').classList.add('active');
+  } else {
+    document.getElementById('registroForm').classList.add('active');
+  }
+  
+  document.getElementById('loginError').classList.remove('show');
+  document.getElementById('registroError').classList.remove('show');
+}
+
+function login() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  
+  if (!email || !password) { mostrarErrorLogin('Por favor complete todos los campos'); return; }
+  if (!validarEmail(email)) { mostrarErrorLogin('Por favor ingrese un correo valido'); return; }
+  
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      if (result.success) {
+        usuarioActual = result.user;
+        localStorage.setItem('usuarioActual', JSON.stringify(usuarioActual));
+        document.getElementById('loginEmail').value = '';
+        document.getElementById('loginPassword').value = '';
+        document.getElementById('loginError').classList.remove('show');
+        iniciarApp();
+      } else {
+        mostrarErrorLogin(result.message || 'Usuario o contrasena incorrectos');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      mostrarErrorLogin('Error de conexion. Intente nuevamente.');
+    })
+    .validarLogin(email, password);
+}
+
+function registrar() {
+  const nombre = document.getElementById('regNombre').value.trim();
+  const email = document.getElementById('regEmail').value.trim();
+  const telefono = document.getElementById('regTelefono').value.trim();
+  const direccion = document.getElementById('regDireccion').value.trim();
+  const password = document.getElementById('regPassword').value;
+  
+  if (!nombre || !email || !telefono || !direccion || !password) { 
+    mostrarErrorRegistro('Por favor complete todos los campos'); return; 
+  }
+  if (!validarEmail(email)) { mostrarErrorRegistro('Por favor ingrese un correo valido'); return; }
+  if (password.length < 6) { mostrarErrorRegistro('La contrasena debe tener al menos 6 caracteres'); return; }
+  
+  const datos = { nombre, email, telefono, direccion, password };
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      if (result.success) {
+        usuarioActual = result.user;
+        localStorage.setItem('usuarioActual', JSON.stringify(usuarioActual));
+        iniciarApp();
+      } else {
+        mostrarErrorRegistro(result.message || 'Error al registrar usuario');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      mostrarErrorRegistro('Error de conexion. Intente nuevamente.');
+    })
+    .registrarUsuario(datos);
+}
+
+function cerrarSesion() {
+  if (confirm('Esta seguro que desea cerrar sesion?')) {
+    localStorage.removeItem('usuarioActual');
+    usuarioActual = null;
+    carrito = [];
+    localStorage.removeItem('carrito');
+    document.querySelectorAll('.screen').forEach(screen => screen.classList.remove('active'));
+    mostrarPantallaLogin();
+  }
+}
+
+function validarEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
+
+function mostrarErrorLogin(mensaje) {
+  const errorDiv = document.getElementById('loginError');
+  errorDiv.textContent = mensaje;
+  errorDiv.classList.add('show');
+  setTimeout(() => errorDiv.classList.remove('show'), 5000);
+}
+
+function mostrarErrorRegistro(mensaje) {
+  const errorDiv = document.getElementById('registroError');
+  errorDiv.textContent = mensaje;
+  errorDiv.classList.add('show');
+  setTimeout(() => errorDiv.classList.remove('show'), 5000);
+}
+
+// ============================================
+// INICIALIZACIÓN DE LA APP
+// ============================================
+function iniciarApp() {
+  const loginScreen = document.getElementById('loginScreen');
+  if (loginScreen) {
+    loginScreen.classList.remove('active');
+    loginScreen.classList.add('hidden');
+    loginScreen.style.display = 'none';
+  }
+  
+  const menuScreen = document.getElementById('menuScreen');
+  if (menuScreen) menuScreen.classList.add('active');
+  
+  const pedidosScreen = document.getElementById('pedidosScreen');
+  const carritoScreen = document.getElementById('carritoScreen');
+  const cuentaScreen = document.getElementById('cuentaScreen');
+  if (pedidosScreen) pedidosScreen.classList.remove('active');
+  if (carritoScreen) carritoScreen.classList.remove('active');
+  if (cuentaScreen) cuentaScreen.classList.remove('active');
+  
+  const bottomNav = document.getElementById('bottomNav');
+  if (bottomNav) bottomNav.style.display = 'flex';
+  
+  const navItems = document.querySelectorAll('.nav-item');
+  navItems.forEach((item, index) => {
+    if (index === 0) item.classList.add('active');
+    else item.classList.remove('active');
+  });
+  
+  window.scrollTo(0, 0);
+  
+  const userName = document.getElementById('userName');
+  if (userName && usuarioActual && usuarioActual.nombre) {
+    userName.textContent = usuarioActual.nombre.split(' ')[0];
+  }
+  
+  const perfilNombre = document.getElementById('perfilNombre');
+  const perfilEmail = document.getElementById('perfilEmail');
+  const perfilTelefono = document.getElementById('perfilTelefono');
+  const perfilDireccion = document.getElementById('perfilDireccion');
+  const perfilRol = document.getElementById('perfilRol');
+  
+  if (perfilNombre) perfilNombre.textContent = usuarioActual ? usuarioActual.nombre : 'Usuario';
+  if (perfilEmail) perfilEmail.textContent = usuarioActual ? usuarioActual.email : '';
+  if (perfilTelefono) perfilTelefono.textContent = usuarioActual ? (usuarioActual.telefono || '-') : '-';
+  if (perfilDireccion) perfilDireccion.textContent = usuarioActual ? (usuarioActual.direccion || '-') : '-';
+  if (perfilRol) perfilRol.textContent = usuarioActual ? (usuarioActual.rol || 'Cliente') : 'Cliente';
+  
+  aplicarVistaInicial();
+  cargarCategorias();
+  cargarProductos('TODOS');
+  actualizarBadgeCarrito();
+}
+
+function aplicarVistaInicial() {
+  const container = document.getElementById('productsGrid');
+  const btnGrid = document.getElementById('btnViewGrid');
+  const btnList = document.getElementById('btnViewList');
+  
+  if (container) {
+    container.classList.remove('grid-view', 'list-view');
+    container.classList.add(vistaActual === 'list' ? 'list-view' : 'grid-view');
+  }
+  
+  if (btnGrid && btnList) {
+    btnGrid.classList.toggle('active', vistaActual === 'grid');
+    btnList.classList.toggle('active', vistaActual === 'list');
+  }
+}
+
+// ============================================
+// CATEGORÍAS
+// ============================================
+function cargarCategorias() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) { categorias = result.categorias; renderizarCategorias(); }
+    })
+    .withFailureHandler(function(error) { console.error('Error categorias:', error); })
+    .obtenerCategorias();
+}
+
+function renderizarCategorias() {
+  const container = document.getElementById('categoriesGrid');
+  if (!container) return;
+  
+  let html = '<button class="category-pill active" onclick="seleccionarCategoria(\'TODOS\', this)"><span class="pill-icon">🍽️</span><span class="pill-text">Todos</span></button>';
+  
+  categorias.forEach(cat => {
+    const tieneImagen = cat.imagen && cat.imagen.length > 5;
+    const estiloFondo = tieneImagen ? 'background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(\'' + cat.imagen + '\'); background-size: cover; background-position: center;' : '';
+    const claseConImagen = tieneImagen ? 'has-image' : '';
+    
+    html += '<button class="category-pill ' + claseConImagen + '" onclick="seleccionarCategoria(\'' + cat.id + '\', this)" style="' + estiloFondo + '"><span class="pill-icon">' + (cat.icono || '🍴') + '</span><span class="pill-text">' + cat.nombre + '</span></button>';
+  });
+  
+  container.innerHTML = html;
+}
+
+function seleccionarCategoria(idCategoria, elemento) {
+  document.querySelectorAll('.category-pill').forEach(pill => pill.classList.remove('active'));
+  if (elemento) elemento.classList.add('active');
+  cargarProductos(idCategoria);
+  
+  const nombreCategoria = idCategoria === 'TODOS' ? 'Todos los productos' : categorias.find(c => c.id === idCategoria)?.nombre || 'Productos';
+  const productsTitle = document.getElementById('productsTitle');
+  if (productsTitle) productsTitle.textContent = nombreCategoria;
+}
+
+function cambiarVista(tipo) {
+  vistaActual = tipo;
+  const container = document.getElementById('productsGrid');
+  const btnGrid = document.getElementById('btnViewGrid');
+  const btnList = document.getElementById('btnViewList');
+  
+  if (!container) return;
+  
+  container.classList.remove('grid-view', 'list-view');
+  container.classList.add(tipo === 'list' ? 'list-view' : 'grid-view');
+  
+  if (btnGrid && btnList) {
+    btnGrid.classList.toggle('active', tipo === 'grid');
+    btnList.classList.toggle('active', tipo === 'list');
+  }
+  
+  try { localStorage.setItem('vistaPreferida', tipo); } catch (e) {}
+}
+
+// ============================================
+// PRODUCTOS
+// ============================================
+function cargarProductos(idCategoria) {
+  mostrarLoading(true);
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      if (result.success) { productos = result.productos; renderizarProductos(); }
+    })
+    .withFailureHandler(function(error) { mostrarLoading(false); })
+    .obtenerProductos(idCategoria);
+}
+
+function renderizarProductos() {
+  const container = document.getElementById('productsGrid');
+  const countElement = document.getElementById('productsCount');
+  
+  if (!container) return;
+  
+  if (countElement) countElement.textContent = productos.length + ' producto' + (productos.length !== 1 ? 's' : '');
+  
+  container.classList.remove('grid-view', 'list-view');
+  container.classList.add(vistaActual === 'list' ? 'list-view' : 'grid-view');
+  
+  if (!productos || productos.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">🍽️</div><p>No hay productos disponibles</p></div>';
+    return;
+  }
+  
+  const moneda = configuracion.moneda || '$';
+  let html = '';
+  
+  productos.forEach(prod => {
+    const imagenUrl = prod.imagen || 'https://via.placeholder.com/300x200?text=' + encodeURIComponent(prod.nombre);
+    const descripcionCorta = prod.descripcion ? (prod.descripcion.length > 60 ? prod.descripcion.substring(0, 60) + '...' : prod.descripcion) : '';
+    const tiempoPrep = prod.tiempoPreparacion ? prod.tiempoPreparacion + ' min' : '';
+    
+    html += '<div class="product-card" data-id="' + prod.id + '">' +
+      '<div class="product-image-wrapper" onclick="abrirDetalleProducto(\'' + prod.id + '\')">' +
+        '<img src="' + imagenUrl + '" alt="' + prod.nombre + '" class="product-image" loading="lazy" onerror="this.src=\'https://via.placeholder.com/300x200?text=Imagen+no+disponible\'">' +
+        (tiempoPrep ? '<span class="product-time">⏱️ ' + tiempoPrep + '</span>' : '') +
+      '</div>' +
+      '<div class="product-info" onclick="abrirDetalleProducto(\'' + prod.id + '\')">' +
+        '<h4 class="product-name">' + prod.nombre + '</h4>' +
+        '<p class="product-description">' + descripcionCorta + '</p>' +
+      '</div>' +
+      '<div class="product-footer">' +
+        '<span class="product-price">' + moneda + formatearPrecio(prod.precio) + '</span>' +
+        '<button class="btn-add-cart" onclick="event.stopPropagation(); abrirDetalleProducto(\'' + prod.id + '\')" title="Agregar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>' +
+      '</div>' +
+    '</div>';
+  });
+  
+  container.innerHTML = html;
+}
+
+function filtrarProductos() {
+  const busqueda = document.getElementById('searchInput').value.toLowerCase();
+  document.querySelectorAll('.product-card').forEach(card => {
+    const nombre = card.querySelector('.product-name').textContent.toLowerCase();
+    const descripcion = card.querySelector('.product-description').textContent.toLowerCase();
+    card.style.display = (nombre.includes(busqueda) || descripcion.includes(busqueda)) ? '' : 'none';
+  });
+}
+
+function abrirDetalleProducto(idProducto) {
+  productoSeleccionado = productos.find(p => p.id === idProducto);
+  if (!productoSeleccionado) return;
+  
+  const moneda = configuracion.moneda || '$';
+  document.getElementById('modalProductoNombre').textContent = productoSeleccionado.nombre;
+  document.getElementById('modalProductoDescripcion').textContent = productoSeleccionado.descripcion || '';
+  document.getElementById('modalProductoPrecio').textContent = moneda + formatearPrecio(productoSeleccionado.precio);
+  
+  const imagenUrl = productoSeleccionado.imagen || 'https://via.placeholder.com/500x300?text=' + encodeURIComponent(productoSeleccionado.nombre);
+  document.getElementById('modalProductoImagen').src = imagenUrl;
+  document.getElementById('cantidadModal').value = 1;
+  adicionesSeleccionadas = [];
+  cargarAdiciones(productoSeleccionado.categoria);
+  actualizarTotalModal();
+  document.getElementById('modalProducto').classList.add('show');
+}
+
+function cerrarModal() {
+  document.getElementById('modalProducto').classList.remove('show');
+  productoSeleccionado = null;
+  adicionesSeleccionadas = [];
+}
+
+function cargarAdiciones(idCategoria) {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success && result.adiciones.length > 0) {
+        renderizarAdiciones(result.adiciones);
+      } else {
+        document.getElementById('adicionesContainer').innerHTML = '';
+      }
+    })
+    .withFailureHandler(function(error) {})
+    .obtenerAdiciones(idCategoria);
+}
+
+function renderizarAdiciones(adiciones) {
+  const container = document.getElementById('adicionesContainer');
+  const moneda = configuracion.moneda || '$';
+  let html = '<h4>➕ Adicionales</h4>';
+  adiciones.forEach(adicion => {
+    html += '<div class="adicion-item"><label><input type="checkbox" value="' + adicion.id + '" data-precio="' + adicion.precio + '" data-nombre="' + adicion.nombre + '" onchange="toggleAdicion(this)">' + adicion.nombre + '</label><span class="adicion-precio">+' + moneda + formatearPrecio(adicion.precio) + '</span></div>';
+  });
+  container.innerHTML = html;
+}
+
+function toggleAdicion(checkbox) {
+  const idAdicion = checkbox.value;
+  const precio = parseFloat(checkbox.dataset.precio);
+  const nombre = checkbox.dataset.nombre;
+  
+  if (checkbox.checked) {
+    adicionesSeleccionadas.push({ id: idAdicion, nombre: nombre, precio: precio });
+  } else {
+    adicionesSeleccionadas = adicionesSeleccionadas.filter(a => a.id !== idAdicion);
+  }
+  actualizarTotalModal();
+}
+
+function cambiarCantidad(delta) {
+  const input = document.getElementById('cantidadModal');
+  let cantidad = parseInt(input.value) + delta;
+  if (cantidad < 1) cantidad = 1;
+  input.value = cantidad;
+  actualizarTotalModal();
+}
+
+function actualizarTotalModal() {
+  if (!productoSeleccionado) return;
+  const cantidad = parseInt(document.getElementById('cantidadModal').value);
+  const precioBase = productoSeleccionado.precio;
+  const precioAdiciones = adicionesSeleccionadas.reduce((sum, a) => sum + a.precio, 0);
+  const total = (precioBase + precioAdiciones) * cantidad;
+  const moneda = configuracion.moneda || '$';
+  document.getElementById('totalModal').textContent = moneda + formatearPrecio(total);
+}
+
+// ============================================
+// CARRITO
+// ============================================
+function agregarAlCarrito() {
+  if (!productoSeleccionado) return;
+  
+  const cantidad = parseInt(document.getElementById('cantidadModal').value);
+  const precioBase = productoSeleccionado.precio;
+  const precioAdiciones = adicionesSeleccionadas.reduce((sum, a) => sum + a.precio, 0);
+  const subtotal = (precioBase + precioAdiciones) * cantidad;
+  
+  const item = {
+    id: Date.now(),
+    idProducto: productoSeleccionado.id,
+    nombre: productoSeleccionado.nombre,
+    imagen: productoSeleccionado.imagen,
+    cantidad: cantidad,
+    precioUnitario: precioBase,
+    adiciones: adicionesSeleccionadas.map(a => a.nombre).join(', '),
+    precioAdiciones: precioAdiciones,
+    subtotal: subtotal
+  };
+  
+  carrito.push(item);
+  guardarCarrito();
+  actualizarBadgeCarrito();
+  cerrarModal();
+  mostrarNotificacion('Producto agregado al carrito');
+}
+
+function guardarCarrito() { try { localStorage.setItem('carrito', JSON.stringify(carrito)); } catch (e) {} }
+
+function cargarCarritoStorage() {
+  try {
+    const carritoGuardado = localStorage.getItem('carrito');
+    if (carritoGuardado) carrito = JSON.parse(carritoGuardado);
+  } catch (error) { carrito = []; }
+}
+
+function actualizarBadgeCarrito() {
+  const totalItems = carrito.reduce((sum, item) => sum + item.cantidad, 0);
+  const badge = document.getElementById('cartBadge');
+  if (badge) { badge.textContent = totalItems; badge.style.display = totalItems > 0 ? 'block' : 'none'; }
+}
+
+function renderizarCarrito() {
+  const container = document.getElementById('carritoItems');
+  const moneda = configuracion.moneda || '$';
+  
+  if (!container) return;
+  
+  if (carrito.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">🛒</div><p>Tu carrito esta vacio</p></div>';
+    actualizarTotalesCarrito();
+    return;
+  }
+  
+  let html = '';
+  carrito.forEach((item, index) => {
+    const imagenUrl = item.imagen || 'https://via.placeholder.com/80x80?text=Producto';
+    html += '<div class="carrito-item"><img src="' + imagenUrl + '" alt="' + item.nombre + '" class="carrito-item-imagen" onerror="this.src=\'https://via.placeholder.com/80x80?text=N/A\'"><div class="carrito-item-info"><div class="carrito-item-nombre">' + item.nombre + '</div>' + (item.adiciones ? '<div style="font-size: 12px; color: #6B7280;">+ ' + item.adiciones + '</div>' : '') + '<div class="carrito-item-precio">' + moneda + formatearPrecio(item.subtotal) + '</div><div class="carrito-item-controles"><button onclick="cambiarCantidadCarrito(' + index + ', -1)">➖</button><span class="carrito-item-cantidad">' + item.cantidad + '</span><button onclick="cambiarCantidadCarrito(' + index + ', 1)">➕</button><button class="btn-eliminar" onclick="eliminarDelCarrito(' + index + ')">🗑️</button></div></div></div>';
+  });
+  
+  container.innerHTML = html;
+  actualizarTotalesCarrito();
+}
+
+function cambiarCantidadCarrito(index, delta) {
+  carrito[index].cantidad += delta;
+  if (carrito[index].cantidad < 1) carrito[index].cantidad = 1;
+  const precioUnitarioTotal = carrito[index].precioUnitario + (carrito[index].precioAdiciones || 0);
+  carrito[index].subtotal = precioUnitarioTotal * carrito[index].cantidad;
+  guardarCarrito();
+  renderizarCarrito();
+  actualizarBadgeCarrito();
+}
+
+function eliminarDelCarrito(index) {
+  if (confirm('Eliminar este producto del carrito?')) {
+    carrito.splice(index, 1);
+    guardarCarrito();
+    renderizarCarrito();
+    actualizarBadgeCarrito();
+  }
+}
+
+function actualizarTotalesCarrito() {
+  const moneda = configuracion.moneda || '$';
+  const subtotal = carrito.reduce((sum, item) => sum + item.subtotal, 0);
+  const carritoSubtotal = document.getElementById('carritoSubtotal');
+  const carritoTotal = document.getElementById('carritoTotal');
+  if (carritoSubtotal) carritoSubtotal.textContent = moneda + formatearPrecio(subtotal);
+  if (carritoTotal) carritoTotal.textContent = moneda + formatearPrecio(subtotal);
+}
+
+// ============================================
+// CHECKOUT
+// ============================================
+function abrirModalCheckout() {
+  if (carrito.length === 0) { alert('El carrito esta vacio'); return; }
+  
+  const moneda = configuracion.moneda || '$';
+  const subtotal = carrito.reduce((sum, item) => sum + item.subtotal, 0);
+  
+  document.getElementById('checkoutSubtotal').textContent = moneda + formatearPrecio(subtotal);
+  document.getElementById('checkoutTotal').textContent = moneda + formatearPrecio(subtotal);
+  
+  if (usuarioActual) {
+    const direccionInput = document.getElementById('direccionEntrega');
+    const telefonoInput = document.getElementById('telefonoEntrega');
+    if (direccionInput) direccionInput.value = usuarioActual.direccion || '';
+    if (telefonoInput) telefonoInput.value = usuarioActual.telefono || '';
+  }
+  
+  generarBotonesEfectivo(subtotal);
+  document.getElementById('efectivoCustom').value = '';
+  document.getElementById('devueltaContainer').style.display = 'none';
+  document.getElementById('modalCheckout').classList.add('show');
+}
+
+function cerrarModalCheckout() { document.getElementById('modalCheckout').classList.remove('show'); }
+
+function generarBotonesEfectivo(total) {
+  const container = document.getElementById('botonesEfectivo');
+  const moneda = configuracion.moneda || '$';
+  const denominaciones = [10000, 20000, 50000, 100000];
+  
+  let html = '<button class="btn-efectivo btn-exacto" onclick="seleccionarEfectivo(' + total + ')">💵 Pago Exacto: ' + moneda + formatearPrecio(total) + '</button>';
+  
+  denominaciones.forEach(denom => {
+    if (denom >= total) {
+      html += '<button class="btn-efectivo" onclick="seleccionarEfectivo(' + denom + ')">' + moneda + formatearPrecio(denom) + '</button>';
+    }
+  });
+  
+  container.innerHTML = html;
+}
+
+function seleccionarEfectivo(monto) {
+  document.getElementById('efectivoCustom').value = monto;
+  document.querySelectorAll('.btn-efectivo').forEach(btn => btn.classList.remove('selected'));
+  calcularDevuelta();
+}
+
+function calcularDevuelta() {
+  const efectivo = parseFloat(document.getElementById('efectivoCustom').value) || 0;
+  const total = carrito.reduce((sum, item) => sum + item.subtotal, 0);
+  const devueltaContainer = document.getElementById('devueltaContainer');
+  const montoDevuelta = document.getElementById('montoDevuelta');
+  const moneda = configuracion.moneda || '$';
+  
+  if (efectivo >= total) {
+    devueltaContainer.style.display = 'flex';
+    montoDevuelta.textContent = moneda + formatearPrecio(efectivo - total);
+  } else {
+    devueltaContainer.style.display = 'none';
+  }
+}
+
+function actualizarTipoEntrega() {
+  const tipoEntrega = document.querySelector('input[name="tipoEntrega"]:checked').value;
+  document.getElementById('direccionEntregaContainer').style.display = tipoEntrega === 'Domicilio' ? 'block' : 'none';
+}
+
+function actualizarMetodoPago() {
+  const metodoPago = document.querySelector('input[name="metodoPago"]:checked').value;
+  document.getElementById('calculadoraEfectivo').style.display = metodoPago === 'Efectivo' ? 'block' : 'none';
+}
+
+function procesarPedido() {
+  if (carrito.length === 0) { alert('El carrito esta vacio'); return; }
+  if (!usuarioActual) { alert('Debe iniciar sesion para realizar un pedido'); return; }
+  
+  const tipoEntrega = document.querySelector('input[name="tipoEntrega"]:checked').value;
+  const metodoPago = document.querySelector('input[name="metodoPago"]:checked').value;
+  const notas = document.getElementById('notasPedido').value;
+  
+  let direccionEntrega = usuarioActual.direccion || '';
+  let telefonoContacto = usuarioActual.telefono || '';
+  
+  if (tipoEntrega === 'Domicilio') {
+    direccionEntrega = document.getElementById('direccionEntrega').value || direccionEntrega;
+    telefonoContacto = document.getElementById('telefonoEntrega').value || telefonoContacto;
+    if (!direccionEntrega) { alert('Por favor ingrese una direccion de entrega'); return; }
+  }
+  
+  const subtotal = carrito.reduce((sum, item) => sum + item.subtotal, 0);
+  
+  const pedidoData = {
+    idCliente: usuarioActual.id,
+    items: carrito.map(item => ({
+      idProducto: item.idProducto,
+      cantidad: item.cantidad,
+      precioUnitario: item.precioUnitario,
+      adiciones: item.adiciones || '',
+      precioAdiciones: item.precioAdiciones || 0,
+      subtotalItem: item.subtotal
+    })),
+    subtotal: subtotal, descuento: 0, total: subtotal,
+    tipoEntrega: tipoEntrega, direccionEntrega: direccionEntrega,
+    telefonoContacto: telefonoContacto, metodoPago: metodoPago, notas: notas
+  };
+  
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      if (result.success) {
+        cerrarModalCheckout();
+        document.getElementById('exitoIdPedido').textContent = result.idPedido;
+        document.getElementById('modalExito').classList.add('show');
+        carrito = [];
+        guardarCarrito();
+        actualizarBadgeCarrito();
+        renderizarCarrito();
+      } else {
+        alert('Error al crear pedido: ' + result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      alert('Error de conexion. Intente nuevamente.');
+    })
+    .crearPedido(pedidoData);
+}
+
+function cerrarModalExito() {
+  document.getElementById('modalExito').classList.remove('show');
+  const pedidosBtn = document.querySelector('.nav-item:nth-child(2)');
+  cambiarPantalla('pedidosScreen', pedidosBtn);
+}
+
+// ============================================
+// MIS PEDIDOS - CON TIMELINE DE HISTORIAL
+// ============================================
+function cargarMisPedidos() {
+  if (!usuarioActual || !usuarioActual.id) {
+    mostrarErrorPedidos('Debe iniciar sesion para ver sus pedidos');
+    return;
+  }
+  
+  const container = document.getElementById('pedidosList');
+  if (container) {
+    container.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="spinner"></div><p style="margin-top: 15px; color: var(--color-texto-claro);">Cargando pedidos...</p></div>';
+  }
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        renderizarMisPedidos(result.pedidos);
+      } else {
+        mostrarErrorPedidos(result.message || 'Error al cargar pedidos');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarErrorPedidos('Error de conexion. Intente nuevamente.');
+    })
+    .obtenerMisPedidos(usuarioActual.id);
+}
+
+function renderizarMisPedidos(pedidos) {
+  const container = document.getElementById('pedidosList');
+  const moneda = configuracion.moneda || '$';
+  
+  if (!container) return;
+  
+  if (!pedidos || pedidos.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon" style="font-size: 60px; opacity: 0.5;">📦</div><p>Aun no tienes pedidos</p><p style="font-size: 14px; margin-top: 10px;">Realiza tu primer pedido desde el menu!</p></div>';
+    return;
+  }
+  
+  let html = '';
+  pedidos.forEach(pedido => {
+    const fecha = new Date(pedido.fechaPedido);
+    const fechaFormateada = formatearFecha(fecha);
+    
+    html += '<div class="pedido-card"><div class="pedido-header"><div><div class="pedido-id">' + pedido.idPedido + '</div><div class="pedido-fecha">' + fechaFormateada + '</div></div><div class="pedido-total">' + moneda + formatearPrecio(pedido.total) + '</div></div>' + renderizarBarraEstado(pedido.estado) + '<button class="btn-ver-detalle" onclick="toggleDetallePedido(\'' + pedido.idPedido + '\')">Ver detalles y seguimiento</button><div id="detalle-' + pedido.idPedido + '" class="pedido-detalles"><div class="spinner" style="margin: 20px auto;"></div></div></div>';
+  });
+  
+  container.innerHTML = html;
+}
+
+function renderizarBarraEstado(estadoActual) {
+  const estados = [
+    { nombre: 'Solicitado', icono: '📋' },
+    { nombre: 'Recibido', icono: '✅' },
+    { nombre: 'Enviado', icono: '🚚' },
+    { nombre: 'Entregado', icono: '🎉' }
+  ];
+  
+  const indiceActual = estados.findIndex(e => e.nombre === estadoActual);
+  const progreso = indiceActual >= 0 ? ((indiceActual + 1) / estados.length) * 100 : 0;
+  
+  let html = '<div class="estado-progress"><div class="estado-pasos"><div class="estado-linea-progreso" style="width: ' + progreso + '%"></div>';
+  
+  estados.forEach((estado, index) => {
+    const completado = index <= indiceActual;
+    const activo = index === indiceActual;
+    const claseEstado = completado ? 'completado' : (activo ? 'activo' : '');
+    
+    html += '<div class="estado-paso ' + claseEstado + '"><div class="estado-circulo"><span class="estado-icono">' + (completado ? '✔' : estado.icono) + '</span></div><div class="estado-texto">' + estado.nombre + '</div></div>';
+  });
+  
+  html += '</div></div>';
+  return html;
+}
+
+function toggleDetallePedido(idPedido) {
+  const detalleDiv = document.getElementById('detalle-' + idPedido);
+  
+  if (!detalleDiv) return;
+  
+  if (detalleDiv.style.display === 'block') {
+    detalleDiv.style.display = 'none';
+    return;
+  }
+  
+  detalleDiv.style.display = 'block';
+  
+  if (detalleDiv.innerHTML.includes('spinner')) {
+    cargarDetallePedidoConHistorial(idPedido);
+  }
+}
+
+/**
+ * Cargar detalle CON historial de estados
+ */
+function cargarDetallePedidoConHistorial(idPedido) {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        renderizarDetallePedidoConHistorial(idPedido, result.items, result.historial || []);
+      } else {
+        const detalleDiv = document.getElementById('detalle-' + idPedido);
+        if (detalleDiv) {
+          detalleDiv.innerHTML = '<p style="color: var(--color-peligro); text-align: center;">Error: ' + result.message + '</p>';
+        }
+      }
+    })
+    .withFailureHandler(function(error) {
+      const detalleDiv = document.getElementById('detalle-' + idPedido);
+      if (detalleDiv) {
+        detalleDiv.innerHTML = '<p style="color: var(--color-peligro); text-align: center;">Error de conexion</p>';
+      }
+    })
+    .obtenerDetallePedidoConHistorial(idPedido, usuarioActual.id);
+}
+
+/**
+ * Renderizar detalle con timeline de historial
+ */
+function renderizarDetallePedidoConHistorial(idPedido, items, historial) {
+  const detalleDiv = document.getElementById('detalle-' + idPedido);
+  const moneda = configuracion.moneda || '$';
+  
+  if (!detalleDiv) return;
+  
+  let html = '';
+  
+  // Items del pedido
+  html += '<div class="detalle-seccion"><h5 style="margin-bottom: 10px; color: var(--color-texto); font-size: 14px;">🍽️ Productos</h5>';
+  
+  if (!items || items.length === 0) {
+    html += '<p style="text-align: center; color: var(--color-texto-claro);">Sin items</p>';
+  } else {
+    items.forEach(item => {
+      html += '<div class="detalle-item"><div><div class="detalle-nombre">' + item.nombreProducto + '</div><div class="detalle-cantidad">Cantidad: ' + item.cantidad + '</div>' + (item.adiciones ? '<div style="font-size: 12px; color: #6B7280;">+ ' + item.adiciones + '</div>' : '') + '</div><div style="font-weight: 600; color: var(--color-primario);">' + moneda + formatearPrecio(item.subtotalItem) + '</div></div>';
+    });
+  }
+  html += '</div>';
+  
+  // Timeline de historial
+  if (historial && historial.length > 0) {
+    html += '<div class="detalle-seccion historial-seccion"><h5 style="margin-bottom: 12px; color: var(--color-texto); font-size: 14px;">📜 Seguimiento del Pedido</h5><div class="timeline-pedido">';
+    
+    historial.forEach((evento, index) => {
+      const fecha = new Date(evento.fechaHora);
+      const fechaStr = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
+      const horaStr = fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+      const esUltimo = index === historial.length - 1;
+      const icono = obtenerIconoEstadoCliente(evento.estadoNuevo);
+      
+      html += '<div class="timeline-item-cliente ' + (esUltimo ? 'activo' : '') + '"><div class="timeline-marker-cliente"><span>' + icono + '</span></div><div class="timeline-content-cliente"><div class="timeline-estado">' + evento.estadoNuevo + '</div><div class="timeline-fecha">' + fechaStr + ' a las ' + horaStr + '</div>' + (evento.nombreUsuario ? '<div class="timeline-usuario">Por: ' + evento.nombreUsuario + '</div>' : '') + (evento.notas ? '<div class="timeline-notas">' + evento.notas + '</div>' : '') + '</div></div>';
+    });
+    
+    html += '</div></div>';
+  }
+  
+  detalleDiv.innerHTML = html;
+}
+
+function obtenerIconoEstadoCliente(estado) {
+  const iconos = { 'Solicitado': '📋', 'Recibido': '🍳', 'Enviado': '🚚', 'Entregado': '✅', 'Cancelado': '❌' };
+  return iconos[estado] || '📌';
+}
+
+function mostrarErrorPedidos(mensaje) {
+  const container = document.getElementById('pedidosList');
+  if (!container) return;
+  container.innerHTML = '<div class="empty-state"><div class="empty-icon" style="font-size: 60px; opacity: 0.5;">⚠️</div><p>' + mensaje + '</p><button class="btn-primary" style="margin-top: 15px;" onclick="cargarMisPedidos()">Reintentar</button></div>';
+}
+
+// ============================================
+// NAVEGACIÓN
+// ============================================
+function cambiarPantalla(nombrePantalla, elemento) {
+  const pantalla = document.getElementById(nombrePantalla);
+  if (!pantalla) return;
+  
+  const pantallas = ['menuScreen', 'pedidosScreen', 'carritoScreen', 'cuentaScreen'];
+  pantallas.forEach(id => {
+    const screen = document.getElementById(id);
+    if (screen) screen.classList.remove('active');
+  });
+  
+  pantalla.classList.add('active');
+  
+  document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+  if (elemento) elemento.classList.add('active');
+  
+  window.scrollTo(0, 0);
+  
+  if (nombrePantalla === 'pedidosScreen') cargarMisPedidos();
+  else if (nombrePantalla === 'carritoScreen') renderizarCarrito();
+}
+
+// ============================================
+// UTILIDADES
+// ============================================
+function formatearPrecio(precio) {
+  return parseFloat(precio || 0).toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function formatearFecha(fecha) {
+  if (!fecha || isNaN(fecha.getTime())) return 'Fecha no disponible';
+  return fecha.toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function mostrarLoading(mostrar) {
+  const overlay = document.getElementById('loadingOverlay');
+  if (overlay) {
+    if (mostrar) overlay.classList.add('show');
+    else overlay.classList.remove('show');
+  }
+}
+
+function mostrarNotificacion(mensaje) {
+  const notif = document.createElement('div');
+  notif.style.cssText = 'position: fixed; top: 20px; right: 20px; background: var(--color-exito); color: white; padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 9999; animation: slideIn 0.3s ease; font-weight: 600;';
+  notif.textContent = mensaje;
+  document.body.appendChild(notif);
+  setTimeout(() => { notif.style.animation = 'slideOut 0.3s ease'; setTimeout(() => notif.remove(), 300); }, 3000);
+}
+
+// ============================================
+// EVENTOS GLOBALES
+// ============================================
+document.addEventListener('click', function(e) {
+  if (e.target === document.getElementById('modalProducto')) cerrarModal();
+  if (e.target === document.getElementById('modalCheckout')) cerrarModalCheckout();
+});
+
+document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
+
+// CSS para Timeline
+const styleTimeline = document.createElement('style');
+styleTimeline.textContent = '@keyframes slideIn { from { opacity: 0; transform: translateX(100px); } to { opacity: 1; transform: translateX(0); } } @keyframes slideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100px); } } .historial-seccion { margin-top: 20px; padding-top: 15px; border-top: 1px dashed var(--color-borde); } .timeline-pedido { position: relative; padding-left: 25px; } .timeline-pedido::before { content: \'\'; position: absolute; left: 8px; top: 5px; bottom: 5px; width: 2px; background: var(--color-borde); } .timeline-item-cliente { position: relative; padding-bottom: 15px; padding-left: 10px; } .timeline-item-cliente:last-child { padding-bottom: 0; } .timeline-marker-cliente { position: absolute; left: -22px; width: 20px; height: 20px; background: white; border: 2px solid var(--color-borde); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; } .timeline-item-cliente.activo .timeline-marker-cliente { background: var(--color-primario); border-color: var(--color-primario); } .timeline-content-cliente { background: var(--color-fondo); border-radius: 8px; padding: 10px 12px; } .timeline-estado { font-weight: 600; font-size: 14px; color: var(--color-texto); } .timeline-fecha { font-size: 12px; color: var(--color-texto-claro); margin-top: 2px; } .timeline-usuario { font-size: 11px; color: var(--color-texto-claro); font-style: italic; margin-top: 4px; } .timeline-notas { margin-top: 6px; padding: 6px 8px; background: #FEF3C7; border-radius: 4px; font-size: 11px; color: #92400E; } .detalle-seccion { margin-bottom: 15px; }';
+document.head.appendChild(styleTimeline);
+
+console.log('JavaScript V2 con Timeline cargado correctamente');
+</script>
