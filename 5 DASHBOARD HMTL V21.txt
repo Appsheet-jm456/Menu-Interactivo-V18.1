@@ -76,16 +76,17 @@
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
         <div class="brand">
-          <div class="brand-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <div class="brand-icon" id="brandIconContainer">
+            <img id="brandLogo" src="" alt="Logo" class="brand-logo" style="display: none;">
+            <svg id="brandIconSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2L2 7l10 5 10-5-10-5z"/>
               <path d="M2 17l10 5 10-5"/>
               <path d="M2 12l10 5 10-5"/>
             </svg>
           </div>
           <div class="brand-text">
-            <span class="brand-name">CloudPyme</span>
-            <span class="brand-sub">POS Dashboard</span>
+            <span class="brand-name" id="brandName">CloudPyme</span>
+            <span class="brand-sub" id="brandSub">POS Dashboard</span>
           </div>
         </div>
         <button class="sidebar-toggle" onclick="toggleSidebar()">

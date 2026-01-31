@@ -271,27 +271,41 @@ function aplicarPersonalizacion() {
     document.documentElement.style.setProperty('--primary-dark', ajustarColor(configuracion.colorPrimario, -20));
     document.documentElement.style.setProperty('--primary-light', ajustarColor(configuracion.colorPrimario, 20));
   }
-  
+
   if (configuracion.colorSecundario) {
     document.documentElement.style.setProperty('--secondary', configuracion.colorSecundario);
     document.documentElement.style.setProperty('--secondary-dark', ajustarColor(configuracion.colorSecundario, -20));
     document.documentElement.style.setProperty('--bg-sidebar', configuracion.colorSecundario);
   }
-  
+
   if (configuracion.colorAcento) {
     document.documentElement.style.setProperty('--warning', configuracion.colorAcento);
   }
-  
+
   const loginHeaderP = document.querySelector('.login-header p');
   if (loginHeaderP && configuracion.nombreEmpresa) {
     loginHeaderP.textContent = configuracion.nombreEmpresa + ' - Dashboard';
   }
-  
-  const brandName = document.querySelector('.brand-name');
+
+  // Aplicar nombre de empresa en sidebar
+  const brandName = document.getElementById('brandName');
   if (brandName && configuracion.nombreEmpresa) {
     brandName.textContent = configuracion.nombreEmpresa;
   }
-  
+
+  // Aplicar logo de empresa en sidebar
+  const brandLogo = document.getElementById('brandLogo');
+  const brandIconSvg = document.getElementById('brandIconSvg');
+  if (configuracion.logoUrl && brandLogo) {
+    brandLogo.src = configuracion.logoUrl;
+    brandLogo.style.display = 'block';
+    brandLogo.onerror = function() {
+      this.style.display = 'none';
+      if (brandIconSvg) brandIconSvg.style.display = 'block';
+    };
+    if (brandIconSvg) brandIconSvg.style.display = 'none';
+  }
+
   console.log('✅ Personalización aplicada');
 }
 

@@ -53,8 +53,27 @@ function cargarConfiguracionInicial() {
 
 function aplicarConfiguracion() {
   var nombreEmpresa = configuracion.nombreEmpresa || 'CloudPyme';
-  var el = document.getElementById('loginEmpresaNombre');
-  if (el) el.textContent = nombreEmpresa + String.fromCharCode(174);
+
+  // Aplicar nombre en login
+  var elLogin = document.getElementById('loginEmpresaNombre');
+  if (elLogin) elLogin.textContent = nombreEmpresa + String.fromCharCode(174);
+
+  // Aplicar nombre en header del dashboard
+  var elHeader = document.getElementById('headerTitle');
+  if (elHeader) elHeader.textContent = nombreEmpresa;
+
+  // Aplicar logo en header del dashboard
+  var logoEl = document.getElementById('headerLogo');
+  var logoFallback = document.querySelector('.header-logo-fallback');
+  if (configuracion.logoUrl && logoEl) {
+    logoEl.src = configuracion.logoUrl;
+    logoEl.style.display = 'block';
+    logoEl.onerror = function() {
+      this.style.display = 'none';
+      if (logoFallback) logoFallback.style.display = 'flex';
+    };
+    if (logoFallback) logoFallback.style.display = 'none';
+  }
 }
 
 function iniciarReloj() {
