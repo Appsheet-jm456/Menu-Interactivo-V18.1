@@ -773,7 +773,7 @@ function renderizarModalDetalle() {
     datosOperacionContainer.innerHTML = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
       '<div>' +
         '<p style="margin: 0 0 4px 0; font-size: 13px; color: #6b7280;"><strong>🏠 Mesa:</strong></p>' +
-        '<p style="margin: 0; font-size: 14px; color: #111827;">' + (p.idMesa || 'N/A') + (p.comensales ? ' (' + p.comensales + ' comensales)' : '') + '</p>' +
+        '<p style="margin: 0; font-size: 14px; color: #111827;">' + (p.nombreMesa || p.idMesa || 'N/A') + (p.comensales ? ' (' + p.comensales + ' comensales)' : '') + (p.ubicacionMesa ? '. ' + p.ubicacionMesa : '') + '</p>' +
       '</div>' +
       '<div>' +
         '<p style="margin: 0 0 4px 0; font-size: 13px; color: #6b7280;"><strong>💁‍♂️ Atendido por:</strong></p>' +
@@ -1202,8 +1202,9 @@ function imprimirComanda() {
   if (p.tipoEntrega === 'Mesa' || p.idMesa) {
     seccionContexto = '<div style="text-align: center; margin: 15px 0; padding: 10px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000;">' +
       '<div style="font-size: 28px; font-weight: bold;">MESA</div>' +
-      '<div style="font-size: 48px; font-weight: bold;">' + (p.idMesa || 'N/A') + '</div>' +
+      '<div style="font-size: 48px; font-weight: bold;">' + (p.nombreMesa || p.idMesa || 'N/A') + '</div>' +
       (p.comensales ? '<div style="font-size: 12px; margin-top: 5px;">' + p.comensales + ' comensales</div>' : '') +
+      (p.ubicacionMesa ? '<div style="font-size: 12px; margin-top: 3px; font-style: italic;">' + p.ubicacionMesa + '</div>' : '') +
     '</div>';
   } else if (p.tipoEntrega === 'Domicilio') {
     seccionContexto = '<div style="margin: 10px 0; padding: 10px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000;">' +

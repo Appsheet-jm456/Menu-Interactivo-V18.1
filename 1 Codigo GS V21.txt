@@ -743,11 +743,23 @@ function obtenerDetallePedidoDashboard(idPedido) {
     const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
     const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
     const sheetUsuarios = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
-    
+    const sheetMesas = ss.getSheetByName('Mesas');
+
     const dataPedidos = sheetPedidos.getDataRange().getValues();
     const dataDetalle = sheetDetalle.getDataRange().getValues();
     const dataProductos = sheetProductos.getDataRange().getValues();
     const dataUsuarios = sheetUsuarios.getDataRange().getValues();
+    const dataMesas = sheetMesas ? sheetMesas.getDataRange().getValues() : [];
+
+    // Crear mapa de mesas para búsqueda rápida (ID -> {nombre, ubicacion})
+    const mesasMap = {};
+    for (let i = 1; i < dataMesas.length; i++) {
+      const idMesaKey = String(dataMesas[i][0]).trim().toUpperCase();
+      mesasMap[idMesaKey] = {
+        nombre: String(dataMesas[i][1] || '').trim(),
+        ubicacion: String(dataMesas[i][3] || 'Principal').trim()
+      };
+    }
     
     const headers = dataPedidos[0];
     const tieneNuevaEstructura = headers.length >= 16;
@@ -788,8 +800,22 @@ function obtenerDetallePedidoDashboard(idPedido) {
           atendidoPor: String(row[COL.ATENDIDO_POR] || ''),
           // V21: Campos adicionales para Mesa y Comensales
           idMesa: tieneNuevaEstructura && row[17] ? String(row[17]) : '',
-          comensales: tieneNuevaEstructura && row[19] ? Number(row[19]) : 0
+          comensales: tieneNuevaEstructura && row[19] ? Number(row[19]) : 0,
+          // Datos adicionales de la mesa (nombre completo y ubicación)
+          nombreMesa: '',
+          ubicacionMesa: ''
         };
+
+        // Buscar datos de la mesa si existe idMesa
+        if (pedido.idMesa) {
+          const mesaData = mesasMap[pedido.idMesa.toUpperCase()];
+          if (mesaData) {
+            pedido.nombreMesa = mesaData.nombre || pedido.idMesa;
+            pedido.ubicacionMesa = mesaData.ubicacion || '';
+          } else {
+            pedido.nombreMesa = pedido.idMesa;
+          }
+        }
         break;
       }
     }
