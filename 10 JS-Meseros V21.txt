@@ -54,9 +54,22 @@ function cargarConfiguracionInicial() {
 function aplicarConfiguracion() {
   var nombreEmpresa = configuracion.nombreEmpresa || 'CloudPyme';
 
-  // Aplicar nombre en login
+  // Aplicar nombre en login (sin duplicar el símbolo ®)
   var elLogin = document.getElementById('loginEmpresaNombre');
-  if (elLogin) elLogin.textContent = nombreEmpresa + String.fromCharCode(174);
+  if (elLogin) elLogin.textContent = nombreEmpresa;
+
+  // Aplicar logo en pantalla de login
+  var loginLogo = document.getElementById('loginLogoMeseros');
+  var loginLogoSvg = document.getElementById('loginLogoSvgMeseros');
+  if (configuracion.logoUrl && loginLogo) {
+    loginLogo.src = configuracion.logoUrl;
+    loginLogo.style.display = 'block';
+    loginLogo.onerror = function() {
+      this.style.display = 'none';
+      if (loginLogoSvg) loginLogoSvg.style.display = 'block';
+    };
+    if (loginLogoSvg) loginLogoSvg.style.display = 'none';
+  }
 
   // Aplicar nombre en header del dashboard
   var elHeader = document.getElementById('headerTitle');

@@ -10,23 +10,24 @@
 <body>
   
   <!-- ================================================
-       PANTALLA DE LOGIN DASHBOARD V19 FASE 9 
+       PANTALLA DE LOGIN DASHBOARD V19 FASE 9
   ================================================= -->
   <div id="loginDashboard" class="login-screen active">
     <div class="login-wrapper">
       <div class="login-card">
         <div class="login-header">
-          <div class="login-logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <div class="login-logo" id="loginLogoContainer">
+            <img id="loginLogo" src="" alt="Logo" style="display: none; max-width: 70px; max-height: 70px; object-fit: contain;">
+            <svg id="loginLogoSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2L2 7l10 5 10-5-10-5z"/>
               <path d="M2 17l10 5 10-5"/>
               <path d="M2 12l10 5 10-5"/>
             </svg>
           </div>
-          <h1>CloudPyme POS</h1>
-          <p>Dashboard Operativo</p>
+          <h1 id="loginNombreEmpresa">CloudPyme POS</h1>
+          <p id="loginSubtitulo">Gestión Interna Pedidos</p>
         </div>
-        
+
         <form id="loginForm" onsubmit="loginDashboard(event)">
           <div class="form-group">
             <label for="loginEmail">Correo electrónico</label>
@@ -38,7 +39,7 @@
               <input type="email" id="loginEmail" placeholder="correo@empresa.com" required>
             </div>
           </div>
-          
+
           <div class="form-group">
             <label for="loginPassword">Contraseña</label>
             <div class="input-wrapper">
@@ -49,9 +50,9 @@
               <input type="password" id="loginPassword" placeholder="••••••••" required>
             </div>
           </div>
-          
+
           <div id="loginError" class="error-alert"></div>
-          
+
           <button type="submit" class="btn-login">
             <span>Ingresar al Dashboard</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -59,9 +60,10 @@
             </svg>
           </button>
         </form>
-        
+
         <div class="login-footer">
           <p>Solo personal autorizado</p>
+          <p class="login-powered">Creado por CloudPyme ®</p>
         </div>
       </div>
     </div>

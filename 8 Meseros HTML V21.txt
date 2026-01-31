@@ -17,8 +17,9 @@
       <div class="login-card">
         <!-- Logo -->
         <div class="login-logo">
-          <div class="logo-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <div class="logo-icon" id="loginLogoContainer">
+            <img id="loginLogoMeseros" src="" alt="Logo" style="display: none; max-width: 60px; max-height: 60px; object-fit: contain; border-radius: 12px;">
+            <svg id="loginLogoSvgMeseros" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <circle cx="12" cy="12" r="10"/>
               <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
               <line x1="9" y1="9" x2="9.01" y2="9" stroke-width="3" stroke-linecap="round"/>
@@ -28,10 +29,10 @@
             </svg>
           </div>
         </div>
-        
+
         <h1 class="login-title" id="loginEmpresaNombre">CloudPyme Restaurant®</h1>
         <p class="login-subtitle">Panel de Meseros</p>
-        
+
         <!-- PIN Display -->
         <div class="pin-display">
           <div class="pin-dots">
@@ -41,7 +42,7 @@
             <span class="pin-dot" id="dot4"></span>
           </div>
         </div>
-        
+
         <!-- Teclado Numerico -->
         <div class="pin-pad">
           <button type="button" class="pin-key" onclick="agregarDigito('1')">1</button>
@@ -68,11 +69,14 @@
             </svg>
           </button>
         </div>
-        
+
         <p class="login-hint">Ingrese su PIN de 4 digitos</p>
-        
+
         <!-- Error Message -->
         <div id="loginError" class="login-error"></div>
+
+        <!-- Footer -->
+        <p class="login-powered">Creado por CloudPyme ®</p>
       </div>
     </div>
   </div>

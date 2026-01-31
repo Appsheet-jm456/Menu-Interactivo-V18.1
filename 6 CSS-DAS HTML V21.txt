@@ -125,6 +125,7 @@ body {
 .btn-login:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .btn-login svg { width: 20px; height: 20px; }
 .login-footer { text-align: center; margin-top: 25px; color: var(--text-light); font-size: 13px; }
+.login-powered { margin-top: 10px; font-size: 11px; color: var(--gray-400); font-style: italic; }
 
 /* DASHBOARD CONTAINER */
 .dashboard-container { display: none; min-height: 100vh; }

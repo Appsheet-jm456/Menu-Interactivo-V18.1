@@ -282,9 +282,23 @@ function aplicarPersonalizacion() {
     document.documentElement.style.setProperty('--warning', configuracion.colorAcento);
   }
 
-  const loginHeaderP = document.querySelector('.login-header p');
-  if (loginHeaderP && configuracion.nombreEmpresa) {
-    loginHeaderP.textContent = configuracion.nombreEmpresa + ' - Dashboard';
+  // Aplicar nombre de empresa en login
+  const loginNombreEmpresa = document.getElementById('loginNombreEmpresa');
+  if (loginNombreEmpresa && configuracion.nombreEmpresa) {
+    loginNombreEmpresa.textContent = configuracion.nombreEmpresa;
+  }
+
+  // Aplicar logo en pantalla de login
+  const loginLogo = document.getElementById('loginLogo');
+  const loginLogoSvg = document.getElementById('loginLogoSvg');
+  if (configuracion.logoUrl && loginLogo) {
+    loginLogo.src = configuracion.logoUrl;
+    loginLogo.style.display = 'block';
+    loginLogo.onerror = function() {
+      this.style.display = 'none';
+      if (loginLogoSvg) loginLogoSvg.style.display = 'block';
+    };
+    if (loginLogoSvg) loginLogoSvg.style.display = 'none';
   }
 
   // Aplicar nombre de empresa en sidebar
