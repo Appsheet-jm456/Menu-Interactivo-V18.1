@@ -274,6 +274,7 @@
             <option value="Todos">Todos</option>
             <option value="Domicilio">🏠 Domicilio</option>
             <option value="Recoger en tienda">🏪 Recoger en tienda</option>
+            <option value="Mesas">🍽️ Mesas</option>
           </select>
         </div>
         

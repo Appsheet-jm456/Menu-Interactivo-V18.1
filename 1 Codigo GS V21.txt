@@ -662,9 +662,15 @@ function obtenerPedidosDashboard(filtros) {
         if (estadoCierre.toLowerCase() !== filtros.estadoCierre.toLowerCase()) continue;
       }
       
-      // FILTRO: Tipo de Entrega
+      // FILTRO: Tipo de Entrega (incluye opción especial "Mesas")
+      const idMesa = tieneNuevaEstructura && row[17] ? String(row[17]).trim() : '';
       if (filtros && filtros.tipoEntrega && filtros.tipoEntrega !== 'Todos') {
-        if (tipoEntrega.toLowerCase() !== filtros.tipoEntrega.toLowerCase()) continue;
+        if (filtros.tipoEntrega.toLowerCase() === 'mesas') {
+          // Filtro especial: mostrar solo pedidos de mesa (tienen idMesa o tipoEntrega = Mesa)
+          if (!idMesa && tipoEntrega.toLowerCase() !== 'mesa') continue;
+        } else {
+          if (tipoEntrega.toLowerCase() !== filtros.tipoEntrega.toLowerCase()) continue;
+        }
       }
       
       // FILTRO: Vista según rol
@@ -678,7 +684,22 @@ function obtenerPedidosDashboard(filtros) {
       
       const idCliente = String(row[COL.ID_CLIENTE]).trim().toUpperCase();
       const cliente = clientesMap[idCliente] || { nombre: 'Cliente no encontrado', email: '', telefono: '', direccion: '' };
-      
+
+      // MEJORA #1: Resolver nombre del usuario que atendió el pedido
+      const atendidoPorRaw = String(row[COL.ATENDIDO_POR] || '').trim();
+      let atendidoPorNombre = atendidoPorRaw;
+      // Si el valor parece ser un ID de usuario (ej: US001, US002), buscar el nombre
+      if (atendidoPorRaw && /^US\d+$/i.test(atendidoPorRaw)) {
+        const usuarioAtendio = clientesMap[atendidoPorRaw.toUpperCase()];
+        if (usuarioAtendio && usuarioAtendio.nombre) {
+          atendidoPorNombre = usuarioAtendio.nombre;
+        } else {
+          atendidoPorNombre = 'Usuario no disponible';
+        }
+      } else if (!atendidoPorRaw) {
+        atendidoPorNombre = 'Sistema';
+      }
+
       pedidos.push({
         idPedido: String(row[COL.ID_PEDIDO]),
         idCliente: String(row[COL.ID_CLIENTE]),
@@ -697,7 +718,9 @@ function obtenerPedidosDashboard(filtros) {
         notas: String(row[COL.NOTAS] || ''),
         estadoCierre: estadoCierre,
         motivoCancelacion: String(row[COL.MOTIVO_CANCELACION] || ''),
-        atendidoPor: String(row[COL.ATENDIDO_POR] || '')
+        atendidoPor: atendidoPorRaw,
+        atendidoPorNombre: atendidoPorNombre,
+        idMesa: idMesa
       });
     }
     
@@ -772,16 +795,43 @@ function obtenerDetallePedidoDashboard(idPedido) {
     }
     
     if (!pedido) return { success: false, message: 'Pedido no encontrado' };
-    
-    const idClienteStr = pedido.idCliente.trim().toUpperCase();
+
+    // Crear mapa de usuarios para búsqueda de nombres
+    const usuariosMap = {};
     for (let i = 1; i < dataUsuarios.length; i++) {
-      if (String(dataUsuarios[i][0]).trim().toUpperCase() === idClienteStr) {
-        pedido.nombreCliente = dataUsuarios[i][3] || 'Sin nombre';
-        pedido.emailCliente = dataUsuarios[i][1] || '';
-        pedido.telefonoCliente = dataUsuarios[i][4] || '';
-        pedido.direccionCliente = dataUsuarios[i][5] || '';
-        break;
+      const idUsuario = String(dataUsuarios[i][0]).trim().toUpperCase();
+      usuariosMap[idUsuario] = {
+        nombre: dataUsuarios[i][3] || 'Sin nombre',
+        email: dataUsuarios[i][1] || '',
+        telefono: dataUsuarios[i][4] || '',
+        direccion: dataUsuarios[i][5] || ''
+      };
+    }
+
+    // Buscar datos del cliente
+    const idClienteStr = pedido.idCliente.trim().toUpperCase();
+    const clienteData = usuariosMap[idClienteStr];
+    if (clienteData) {
+      pedido.nombreCliente = clienteData.nombre;
+      pedido.emailCliente = clienteData.email;
+      pedido.telefonoCliente = clienteData.telefono;
+      pedido.direccionCliente = clienteData.direccion;
+    }
+
+    // MEJORA #1: Resolver nombre del usuario que atendió el pedido
+    const atendidoPorRaw = pedido.atendidoPor || '';
+    if (atendidoPorRaw && /^US\d+$/i.test(atendidoPorRaw)) {
+      const usuarioAtendio = usuariosMap[atendidoPorRaw.toUpperCase()];
+      if (usuarioAtendio && usuarioAtendio.nombre) {
+        pedido.atendidoPorNombre = usuarioAtendio.nombre;
+      } else {
+        pedido.atendidoPorNombre = 'Usuario no disponible';
       }
+    } else if (!atendidoPorRaw) {
+      pedido.atendidoPorNombre = 'Sistema';
+    } else {
+      // Si no es un ID, mantener el valor original (ya es un nombre)
+      pedido.atendidoPorNombre = atendidoPorRaw;
     }
     
     const items = [];
