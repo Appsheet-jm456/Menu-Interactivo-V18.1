@@ -221,6 +221,12 @@
       </div>
       
       <div class="modal-body">
+        <!-- V25.2 - Refinamiento 2: Identificador del pedido -->
+        <div id="pedidoIdentificador" class="pedido-identificador">
+          <span class="icono-pedido">📦</span>
+          <span class="numero-pedido" id="numeroPedidoModal">Pedido #---</span>
+        </div>
+
         <div class="gestion-actions">
           <button type="button" class="gestion-btn" onclick="abrirPOSMesa()">
             <span class="gestion-icon">➕</span>
@@ -235,9 +241,9 @@
             <span>Cobrar</span>
           </button>
         </div>
-        
+
         <div class="gestion-pedido">
-          <h4>📦 Pedido Actual</h4>
+          <h4>🧾 Pedido Actual</h4>
           <div id="itemsMesaList" class="items-list"></div>
           
           <div class="pedido-totales">

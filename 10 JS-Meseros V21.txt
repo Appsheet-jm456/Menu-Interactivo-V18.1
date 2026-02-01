@@ -579,7 +579,7 @@ function renderizarMesas() {
 
   var m = configuracion.moneda || '$';
   var html = '';
-    for (var i = 0; i < mesas.length; i++) {
+  for (var i = 0; i < mesas.length; i++) {
     var mesa = mesas[i];
     var cl = mesa.estado === 'Libre' ? 'mesa-libre' : (mesa.estado === 'Ocupada' ? 'mesa-ocupada' : (mesa.estado === 'Reservada' ? 'mesa-reservada' : 'mesa-cuenta'));
     var st = mesa.estado === 'Libre' ? 'Libre' : (mesa.estado === 'Ocupada' ? 'Ocupada' : (mesa.estado === 'Reservada' ? 'Reservada' : 'Por Cobrar'));
@@ -591,6 +591,13 @@ function renderizarMesas() {
       cont += '<div class="mesa-info">' + mesa.capacidad + ' personas</div>';
     }
     cont += '<span class="mesa-status">' + st + '</span>';
+
+    // V25.2 - Refinamiento 1: Mostrar nombre del mesero en mesas ocupadas
+    if (mesa.estado === 'Ocupada' || mesa.estado === 'Por Cobrar') {
+      var nombreMesero = mesa.meseroAsignado || 'Sin asignar';
+      cont += '<p class="mesero-asignado">Atendido por: ' + nombreMesero + '</p>';
+    }
+
     html += '<div class="mesa-card ' + cl + '" onclick="clickMesa(\'' + mesa.id + '\')">' + cont + '</div>';
   }
   c.innerHTML = html;
@@ -694,6 +701,17 @@ function confirmarAbrirMesa() {
 function abrirModalGestionarMesa() {
   document.getElementById('gestionMesaNombre').textContent = mesaSeleccionada.nombre;
   document.getElementById('gestionMesaInfo').textContent = calcTiempo(mesaSeleccionada.horaOcupacion);
+
+  // V25.2 - Refinamiento 2: Mostrar número de pedido en modal
+  var numeroPedidoEl = document.getElementById('numeroPedidoModal');
+  var pedidoIdentificadorEl = document.getElementById('pedidoIdentificador');
+  if (numeroPedidoEl && mesaSeleccionada.idPedidoActivo) {
+    numeroPedidoEl.textContent = 'Pedido #' + mesaSeleccionada.idPedidoActivo;
+    if (pedidoIdentificadorEl) pedidoIdentificadorEl.style.display = 'flex';
+  } else if (numeroPedidoEl) {
+    numeroPedidoEl.textContent = 'Sin pedido asociado';
+    if (pedidoIdentificadorEl) pedidoIdentificadorEl.style.display = 'flex';
+  }
 
   // Limpiar badge anterior si existe
   var badgeExistente = document.getElementById('badgeEstadoPedido');

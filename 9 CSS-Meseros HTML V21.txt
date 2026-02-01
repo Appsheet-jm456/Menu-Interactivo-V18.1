@@ -1760,5 +1760,92 @@ select.input-valid {
     font-size: 11px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   V25.2 - REFINAMIENTO 1: Nombre del mesero en grid de mesas
+   ═══════════════════════════════════════════════════════════ */
+
+/* Estilo para nombre de mesero en grid de mesas */
+.mesero-asignado {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin: 5px 0 0 0;
+  padding: 3px 8px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  text-align: center;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Variante para mesas ocupadas */
+.mesa-ocupada .mesero-asignado {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Variante para mesas por cobrar */
+.mesa-cuenta .mesero-asignado {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .mesero-asignado {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   V25.2 - REFINAMIENTO 2: Identificador de pedido en modal
+   ═══════════════════════════════════════════════════════════ */
+
+/* Identificador de pedido en modal */
+.pedido-identificador {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  margin: 0 0 15px 0;
+  font-weight: 600;
+  font-size: 1rem;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.icono-pedido {
+  font-size: 1.2rem;
+}
+
+.numero-pedido {
+  letter-spacing: 0.5px;
+  font-family: 'Courier New', monospace;
+}
+
+/* Variante para modal pequeño */
+@media (max-width: 768px) {
+  .pedido-identificador {
+    font-size: 0.9rem;
+    padding: 10px;
+  }
+
+  .icono-pedido {
+    font-size: 1rem;
+  }
+}
+
+/* Separador visual mejorado para seccion de pedido */
+.gestion-pedido {
+  margin-top: 15px;
+  border-top: 2px dashed #e5e7eb;
+  padding-top: 15px;
+}
 </style>
 
