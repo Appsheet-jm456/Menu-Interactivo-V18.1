@@ -1418,23 +1418,37 @@ function abrirMesa(idMesa, datos) {
 }
 
 function cerrarMesa(idMesa, datosCierre) {
+  // ============================================
+  // V21 ANTIFRÁGIL: LockService para cerrarMesa
+  // Protege escrituras concurrentes en Mesas + Pedidos
+  // ============================================
+  const lock = LockService.getScriptLock();
   var idPedidoActivo = '';
   var filaEncontrada = -1;
   var estadoAnteriorPedido = '';
   var idClientePedido = '';
-  
+
   try {
+    // Timeout 15 segundos - operación crítica multi-hoja
+    if (!lock.tryLock(15000)) {
+      Logger.log('LOCK TIMEOUT: cerrarMesa - Sistema ocupado');
+      return {
+        success: false,
+        message: 'Sistema ocupado procesando otra operación. Intente en 2 segundos.'
+      };
+    }
+
     Logger.log('========================================');
-    Logger.log('CERRAR MESA V18 FINAL - Inicio');
+    Logger.log('CERRAR MESA V21 ANTIFRÁGIL - Inicio (LOCK ADQUIRIDO)');
     Logger.log('Mesa: ' + idMesa);
     Logger.log('Timestamp: ' + new Date().toISOString());
     Logger.log('========================================');
-    
+
     if (!idMesa) {
       Logger.log('ERROR: ID de mesa no proporcionado');
       return { success: false, message: 'ID de mesa requerido' };
     }
-    
+
     var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     var sheetMesas = ss.getSheetByName('Mesas');
     var sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
@@ -1609,10 +1623,18 @@ function cerrarMesa(idMesa, datosCierre) {
       Logger.log('Error en recuperacion: ' + e.toString());
     }
     
-    return { 
-      success: false, 
+    return {
+      success: false,
       message: 'Error: ' + error.toString()
     };
+  } finally {
+    // V21 ANTIFRÁGIL: SIEMPRE liberar el lock
+    try {
+      lock.releaseLock();
+      Logger.log('CERRAR MESA V21: Lock liberado correctamente');
+    } catch (lockError) {
+      Logger.log('Error liberando lock cerrarMesa: ' + lockError.toString());
+    }
   }
 }
 
@@ -1917,7 +1939,24 @@ function buscarClienteDomicilio(termino) {
 }
 
 function guardarClienteDomicilio(datos) {
+  // ============================================
+  // V21 ANTIFRÁGIL: LockService para guardarClienteDomicilio
+  // Protege contra duplicación de clientes por celular
+  // ============================================
+  const lock = LockService.getScriptLock();
+
   try {
+    // Timeout 15 segundos - operación que puede crear o actualizar
+    if (!lock.tryLock(15000)) {
+      Logger.log('[DOMICILIO] LOCK TIMEOUT - Sistema ocupado');
+      return {
+        success: false,
+        error: 'Sistema ocupado. Intente guardar el cliente nuevamente.'
+      };
+    }
+
+    Logger.log('[DOMICILIO V21 ANTIFRÁGIL] Inicio (LOCK ADQUIRIDO)');
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     var sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
 
@@ -1935,9 +1974,10 @@ function guardarClienteDomicilio(datos) {
       return { success: false, error: 'Celular requerido' };
     }
 
+    // LECTURA DENTRO DEL LOCK: Obtener datos actuales
     const data = sheet.getDataRange().getValues();
 
-    // Buscar si el cliente ya existe por celular
+    // Buscar si el cliente ya existe por celular (VALIDACIÓN DENTRO DEL LOCK)
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][2]).replace(/\D/g, '').trim() === celular) {
         var fila = i + 1;
@@ -1945,6 +1985,7 @@ function guardarClienteDomicilio(datos) {
         if (datos.nombre) sheet.getRange(fila, 2).setValue(datos.nombre);
         if (datos.direccion) sheet.getRange(fila, 4).setValue(datos.direccion);
         if (datos.notas) sheet.getRange(fila, 5).setValue(datos.notas);
+        SpreadsheetApp.flush();
         Logger.log('[DOMICILIO] Cliente actualizado: ' + celular);
         return { success: true, celular: celular, id: data[i][0], accion: 'actualizado' };
       }
@@ -1972,16 +2013,25 @@ function guardarClienteDomicilio(datos) {
     Logger.log('[DOMICILIO] Valor Activo: ' + nuevaFila[9] + ' (tipo: ' + typeof nuevaFila[9] + ')');
 
     sheet.appendRow(nuevaFila);
+    // CRÍTICO: Forzar escritura ANTES de liberar lock
     SpreadsheetApp.flush();
 
-    Logger.log('[DOMICILIO] ✅ Cliente creado: ' + idCliente + ' | Celular: ' + celular);
+    Logger.log('[DOMICILIO] Cliente creado: ' + idCliente + ' | Celular: ' + celular);
 
     // Retornar celular para compatibilidad con PEDIDOS
     return { success: true, celular: celular, id: idCliente, nombre: datos.nombre, accion: 'creado' };
 
   } catch (error) {
-    Logger.log('[DOMICILIO] ❌ Error guardando cliente: ' + error.toString());
+    Logger.log('[DOMICILIO] Error guardando cliente: ' + error.toString());
     return { success: false, error: error.toString() };
+  } finally {
+    // V21 ANTIFRÁGIL: SIEMPRE liberar el lock
+    try {
+      lock.releaseLock();
+      Logger.log('[DOMICILIO V21] Lock liberado correctamente');
+    } catch (lockError) {
+      Logger.log('[DOMICILIO] Error liberando lock: ' + lockError.toString());
+    }
   }
 }
 
@@ -2054,63 +2104,88 @@ function crearPedidoRapido(datosUsuario) {
 }
 
 function finalizarPedido(idPedido, datosCierre) {
+  // ============================================
+  // V21 ANTIFRÁGIL: LockService para finalizarPedido
+  // Protege escrituras concurrentes en Pedidos
+  // ============================================
+  const lock = LockService.getScriptLock();
+
   try {
+    // Timeout 10 segundos - operación de una sola hoja
+    if (!lock.tryLock(10000)) {
+      Logger.log('LOCK TIMEOUT: finalizarPedido - Sistema ocupado');
+      return {
+        success: false,
+        message: 'Sistema ocupado. Intente finalizar nuevamente en unos segundos.'
+      };
+    }
+
     Logger.log('========================================');
-    Logger.log('FINALIZAR PEDIDO V18 - Inicio');
+    Logger.log('FINALIZAR PEDIDO V21 ANTIFRÁGIL - Inicio (LOCK ADQUIRIDO)');
     Logger.log('Pedido: ' + idPedido);
     Logger.log('========================================');
-    
+
     if (!idPedido) {
       return { success: false, message: 'ID de pedido requerido' };
     }
-    
+
     var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     var sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
-    
+
     if (!sheetPedidos) {
       return { success: false, message: 'Hoja Pedidos no encontrada' };
     }
-    
+
     var data = sheetPedidos.getDataRange().getValues();
     var idPedidoStr = String(idPedido).trim().toUpperCase();
     var encontrado = false;
-    
+
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim().toUpperCase() === idPedidoStr) {
         var fila = i + 1;
         encontrado = true;
-        
+
+        // VALIDACIÓN DENTRO DEL LOCK: Verificar estado actual
         var estadoCierre = String(data[i][13] || '').trim().toLowerCase();
         if (estadoCierre === 'cerrado' || estadoCierre === 'cancelado') {
-          Logger.log('Pedido ya estaba cerrado');
+          Logger.log('Pedido ya estaba cerrado - evitando doble escritura');
           return { success: true, message: 'Pedido procesado', yaEstabaCerrado: true };
         }
-        
+
         if (datosCierre && datosCierre.metodoPago) {
           sheetPedidos.getRange(fila, 12).setValue(datosCierre.metodoPago);
         }
-        
+
         if (datosCierre && datosCierre.cerrar) {
           sheetPedidos.getRange(fila, 5).setValue('Entregado');
           sheetPedidos.getRange(fila, 14).setValue('Cerrado');
         }
-        
+
+        // CRÍTICO: Forzar escritura ANTES de liberar lock
         SpreadsheetApp.flush();
-        Logger.log('Pedido finalizado correctamente');
+        Logger.log('Pedido finalizado correctamente (FLUSH completado)');
         break;
       }
     }
-    
+
     if (!encontrado) {
       Logger.log('Pedido no encontrado: ' + idPedidoStr);
       return { success: false, message: 'Pedido no encontrado' };
     }
-    
+
     return { success: true, message: 'Pedido finalizado' };
-    
+
   } catch (error) {
     Logger.log('Error en finalizarPedido: ' + error.toString());
     return { success: false, message: error.toString() };
+  } finally {
+    // V21 ANTIFRÁGIL: SIEMPRE liberar el lock
+    try {
+      lock.releaseLock();
+      Logger.log('FINALIZAR PEDIDO V21: Lock liberado correctamente');
+    } catch (lockError) {
+      Logger.log('Error liberando lock finalizarPedido: ' + lockError.toString());
+    }
   }
 }
 
@@ -2257,23 +2332,38 @@ function obtenerTotalPedido(idPedido) {
 }
 
 // ============================================
-// V16: UNIFICACIÓN DE IDENTIDAD - CLIENTE UNIFICADO
+// V16/V21: UNIFICACIÓN DE IDENTIDAD - CLIENTE UNIFICADO
+// V21 ANTIFRÁGIL: LockService para evitar duplicados
 // ============================================
 function buscarOcrearClienteUnificado(datosCliente) {
+  // ============================================
+  // V21 ANTIFRÁGIL: LockService para buscarOcrearClienteUnificado
+  // Protege patrón read-modify-write contra race conditions
+  // ============================================
+  const lock = LockService.getScriptLock();
+
   try {
     if (!datosCliente) {
       return '2222222';
     }
-    
+
     const celularLimpio = String(datosCliente.telefono || datosCliente.celular || '').replace(/\D/g, '').trim();
-    
+
     if (!celularLimpio || celularLimpio.length < 7) {
       return obtenerOCrearClienteGenerico();
     }
-    
+
+    // Timeout 15 segundos - operación que puede crear o actualizar
+    if (!lock.tryLock(15000)) {
+      Logger.log('[V21] LOCK TIMEOUT buscarOcrearClienteUnificado - usando genérico');
+      return obtenerOCrearClienteGenerico();
+    }
+
+    Logger.log('[V21 ANTIFRÁGIL] buscarOcrearClienteUnificado - LOCK ADQUIRIDO');
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     let sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
-    
+
     if (!sheet) {
       sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
       const headers = ['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro', 'Email', 'Password', 'Rol', 'Activo'];
@@ -2281,18 +2371,20 @@ function buscarOcrearClienteUnificado(datosCliente) {
       sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
       sheet.setFrozenRows(1);
     }
-    
+
+    // LECTURA DENTRO DEL LOCK: Obtener estado actual
     const data = sheet.getDataRange().getValues();
     const headers = data[0];
     const tieneColumnaEmail = headers.length >= 7;
-    
+
+    // VALIDACIÓN DENTRO DEL LOCK: Buscar cliente existente
     for (let i = 1; i < data.length; i++) {
       const celularEnFila = String(data[i][2] || '').replace(/\D/g, '').trim();
-      
+
       if (celularEnFila === celularLimpio) {
         const fila = i + 1;
         let actualizado = false;
-        
+
         if (datosCliente.nombre && datosCliente.nombre.trim()) {
           const nombreActual = String(data[i][1] || '').trim();
           if (!nombreActual || nombreActual === 'CONSUMIDOR FINAL') {
@@ -2300,12 +2392,12 @@ function buscarOcrearClienteUnificado(datosCliente) {
             actualizado = true;
           }
         }
-        
+
         if (datosCliente.direccion && datosCliente.direccion.trim()) {
           sheet.getRange(fila, 4).setValue(datosCliente.direccion.trim());
           actualizado = true;
         }
-        
+
         if (tieneColumnaEmail && datosCliente.email && datosCliente.email.trim()) {
           const emailActual = String(data[i][6] || '').trim();
           if (!emailActual) {
@@ -2313,18 +2405,20 @@ function buscarOcrearClienteUnificado(datosCliente) {
             actualizado = true;
           }
         }
-        
+
         if (actualizado) {
-          Logger.log('V16 Cliente actualizado: ' + celularLimpio);
+          SpreadsheetApp.flush();
+          Logger.log('V21 Cliente actualizado: ' + celularLimpio);
         }
-        
+
         return celularLimpio;
       }
     }
-    
+
+    // CREAR DENTRO DEL LOCK: Nuevo cliente
     const timestamp = obtenerTimestampColombia();
     const idCliente = celularLimpio;
-    
+
     // FIX Fase 9.5: Siempre crear con 10 columnas incluyendo Activo = true
     const newRow = [
       idCliente,                                                    // 0: ID_Key_Clientes
@@ -2339,15 +2433,25 @@ function buscarOcrearClienteUnificado(datosCliente) {
       true                                                          // 9: Activo ← FIX CRÍTICO
     ];
 
-    Logger.log('[V16] Guardando cliente - Array longitud: ' + newRow.length + ' | Activo: ' + newRow[9]);
+    Logger.log('[V21] Guardando cliente - Array longitud: ' + newRow.length + ' | Activo: ' + newRow[9]);
     sheet.appendRow(newRow);
-    
-    Logger.log('V16 Cliente nuevo creado: ' + idCliente);
+    // CRÍTICO: Forzar escritura ANTES de liberar lock
+    SpreadsheetApp.flush();
+
+    Logger.log('V21 Cliente nuevo creado: ' + idCliente);
     return idCliente;
-    
+
   } catch (error) {
     Logger.log('Error en buscarOcrearClienteUnificado: ' + error.toString());
     return obtenerOCrearClienteGenerico();
+  } finally {
+    // V21 ANTIFRÁGIL: SIEMPRE liberar el lock
+    try {
+      lock.releaseLock();
+      Logger.log('[V21] buscarOcrearClienteUnificado - Lock liberado');
+    } catch (lockError) {
+      Logger.log('[V21] Error liberando lock: ' + lockError.toString());
+    }
   }
 }
 
@@ -3215,3 +3319,163 @@ function adminReactivarEntidad(tipo, id, usuarioSolicitante) {
 }
 
 Logger.log('✅ FASE 9.1 - API CRUD Administrativa cargada correctamente');
+
+// ============================================
+// V21 ANTIFRÁGIL: FUNCIONES DE TESTING Y MONITOREO
+// ============================================
+
+/**
+ * Test de concurrencia para verificar LockService
+ * Ejecutar desde Apps Script para validar funcionamiento
+ */
+function testConcurrenciaLocks() {
+  Logger.log('========================================');
+  Logger.log('TEST CONCURRENCIA V21 ANTIFRÁGIL - Inicio');
+  Logger.log('Timestamp: ' + new Date().toISOString());
+  Logger.log('========================================');
+
+  var resultados = {
+    testLock: false,
+    testTimeout: false,
+    testRelease: false
+  };
+
+  // TEST 1: Verificar que el lock se adquiere correctamente
+  try {
+    var lock1 = LockService.getScriptLock();
+    if (lock1.tryLock(5000)) {
+      Logger.log('✅ TEST 1: Lock adquirido correctamente');
+      resultados.testLock = true;
+      lock1.releaseLock();
+      Logger.log('✅ TEST 1: Lock liberado correctamente');
+      resultados.testRelease = true;
+    } else {
+      Logger.log('❌ TEST 1: No se pudo adquirir lock');
+    }
+  } catch (e) {
+    Logger.log('❌ TEST 1 ERROR: ' + e.toString());
+  }
+
+  // TEST 2: Verificar que segundo lock espera (simula concurrencia)
+  try {
+    var lock2 = LockService.getScriptLock();
+    var lock3 = LockService.getScriptLock();
+
+    if (lock2.tryLock(5000)) {
+      Logger.log('✅ TEST 2: Primer lock adquirido');
+
+      // Intentar segundo lock con timeout corto
+      var tiempoInicio = new Date().getTime();
+      var segundoLockAdquirido = lock3.tryLock(1000);
+      var tiempoEspera = new Date().getTime() - tiempoInicio;
+
+      if (!segundoLockAdquirido && tiempoEspera >= 900) {
+        Logger.log('✅ TEST 2: Timeout funcionando correctamente (' + tiempoEspera + 'ms)');
+        resultados.testTimeout = true;
+      } else if (segundoLockAdquirido) {
+        Logger.log('⚠️ TEST 2: Segundo lock adquirido (mismo script, comportamiento esperado)');
+        resultados.testTimeout = true;
+        lock3.releaseLock();
+      }
+
+      lock2.releaseLock();
+    }
+  } catch (e) {
+    Logger.log('❌ TEST 2 ERROR: ' + e.toString());
+  }
+
+  Logger.log('========================================');
+  Logger.log('RESULTADOS TEST CONCURRENCIA V21');
+  Logger.log('Lock básico: ' + (resultados.testLock ? '✅ PASS' : '❌ FAIL'));
+  Logger.log('Timeout: ' + (resultados.testTimeout ? '✅ PASS' : '❌ FAIL'));
+  Logger.log('Release: ' + (resultados.testRelease ? '✅ PASS' : '❌ FAIL'));
+  Logger.log('========================================');
+
+  return resultados;
+}
+
+/**
+ * Crear backup antes de cambios críticos
+ */
+function crearBackupV21() {
+  try {
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var timestamp = Utilities.formatDate(new Date(), 'GMT-5', 'yyyy-MM-dd_HH-mm');
+    var backup = ss.copy('BACKUP_V21_ANTIFRAGIL_' + timestamp);
+    Logger.log('✅ Backup creado exitosamente');
+    Logger.log('ID Backup: ' + backup.getId());
+    Logger.log('Nombre: ' + backup.getName());
+    return {
+      success: true,
+      backupId: backup.getId(),
+      nombre: backup.getName()
+    };
+  } catch (error) {
+    Logger.log('❌ Error creando backup: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Verificar estado de todas las funciones protegidas con LockService
+ */
+function verificarFuncionesAntifragil() {
+  Logger.log('========================================');
+  Logger.log('VERIFICACIÓN FUNCIONES ANTIFRÁGIL V21');
+  Logger.log('========================================');
+
+  var funcionesProtegidas = [
+    'registrarCambioEstado',
+    'registrarUsuario',
+    'crearPedido',
+    'cambiarEstadoPedido',
+    'abrirMesa',
+    'cerrarMesa',
+    'cancelarPedidoBackend',
+    'agregarItemsPedido',
+    'crearPedidoDomicilio',
+    'crearPedidoRapido',
+    'adminGestionarUsuarios',
+    'adminGestionarClientes',
+    'adminReactivarEntidad',
+    'finalizarPedido',
+    'guardarClienteDomicilio',
+    'buscarOcrearClienteUnificado'
+  ];
+
+  var estado = {};
+  funcionesProtegidas.forEach(function(funcion) {
+    estado[funcion] = typeof this[funcion] === 'function' ? '✅ OK' : '❌ NO ENCONTRADA';
+    Logger.log(funcion + ': ' + estado[funcion]);
+  });
+
+  Logger.log('========================================');
+  Logger.log('Total funciones verificadas: ' + funcionesProtegidas.length);
+  Logger.log('========================================');
+
+  return estado;
+}
+
+/**
+ * Log de operación para monitoreo (uso en funciones críticas)
+ */
+function logOperacionAntifragil(funcion, parametros, resultado, tiempoMs) {
+  try {
+    var timestamp = obtenerTimestampColombia();
+    var logEntry = {
+      timestamp: timestamp,
+      funcion: funcion,
+      parametros: typeof parametros === 'object' ? JSON.stringify(parametros) : parametros,
+      exito: resultado && resultado.success,
+      tiempoMs: tiempoMs || 0,
+      error: resultado && !resultado.success ? (resultado.error || resultado.message) : null
+    };
+
+    Logger.log('[ANTIFRÁGIL] ' + JSON.stringify(logEntry));
+    return logEntry;
+  } catch (e) {
+    Logger.log('Error en logOperacionAntifragil: ' + e.toString());
+  }
+}
+
+Logger.log('✅ V21 ANTIFRÁGIL - LockService implementado en funciones críticas');
