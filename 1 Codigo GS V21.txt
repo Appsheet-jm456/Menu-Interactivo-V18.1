@@ -23,6 +23,365 @@ const CONFIG = {
   ESTADOS_CIERRE: ['Abierto', 'Cerrado', 'Cancelado']
 };
 
+// ═══════════════════════════════════════════════════════════
+// SISTEMA DE VALIDACIÓN ANTIFRÁGIL V21
+// Validación en Backend para prevenir datos corruptos
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Validador de Teléfono
+ * Acepta: Solo dígitos, 7-10 caracteres
+ */
+function validarTelefono(telefono) {
+  if (!telefono) {
+    return { valido: false, error: 'Telefono requerido' };
+  }
+
+  // Limpiar espacios y caracteres especiales
+  var telLimpio = String(telefono).replace(/\s/g, '').replace(/\D/g, '');
+
+  // Validar: solo numeros, 7-10 digitos
+  if (telLimpio.length < 7 || telLimpio.length > 10) {
+    return {
+      valido: false,
+      error: 'Telefono invalido. Debe tener 7-10 digitos numericos'
+    };
+  }
+
+  return { valido: true, valor: telLimpio };
+}
+
+/**
+ * Validador de Email
+ * Acepta: Formato valido o campo vacio
+ */
+function validarEmail(email) {
+  // Email es opcional, puede estar vacio
+  if (!email || String(email).trim() === '') {
+    return { valido: true, valor: '' };
+  }
+
+  var emailLimpio = String(email).trim().toLowerCase();
+
+  // Regex estandar para email
+  var regexEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!regexEmail.test(emailLimpio)) {
+    return {
+      valido: false,
+      error: 'Email invalido. Formato esperado: usuario@dominio.com'
+    };
+  }
+
+  if (emailLimpio.length > 100) {
+    return { valido: false, error: 'Email muy largo (max 100 caracteres)' };
+  }
+
+  return { valido: true, valor: emailLimpio };
+}
+
+/**
+ * Validador de Nombre
+ * Acepta: 2-100 caracteres
+ */
+function validarNombre(nombre) {
+  if (!nombre || String(nombre).trim().length === 0) {
+    return { valido: false, error: 'Nombre requerido' };
+  }
+
+  var nombreLimpio = String(nombre).trim();
+
+  if (nombreLimpio.length < 2) {
+    return { valido: false, error: 'Nombre muy corto (min 2 caracteres)' };
+  }
+
+  if (nombreLimpio.length > 100) {
+    return { valido: false, error: 'Nombre muy largo (max 100 caracteres)' };
+  }
+
+  // No permitir solo numeros
+  if (/^\d+$/.test(nombreLimpio)) {
+    return { valido: false, error: 'Nombre no puede ser solo numeros' };
+  }
+
+  return { valido: true, valor: nombreLimpio };
+}
+
+/**
+ * Validador de Precio
+ * Acepta: Numeros >= 0, max 10,000,000
+ */
+function validarPrecio(precio) {
+  var precioNum = parseFloat(precio);
+
+  if (isNaN(precioNum)) {
+    return { valido: false, error: 'Precio debe ser un numero' };
+  }
+
+  if (precioNum < 0) {
+    return { valido: false, error: 'Precio no puede ser negativo' };
+  }
+
+  if (precioNum > 10000000) {
+    return { valido: false, error: 'Precio supera el limite maximo' };
+  }
+
+  return { valido: true, valor: precioNum };
+}
+
+/**
+ * Validador de Cantidad
+ * Acepta: Enteros entre 1 y 999
+ */
+function validarCantidad(cantidad) {
+  var cantidadNum = parseInt(cantidad);
+
+  if (isNaN(cantidadNum)) {
+    return { valido: false, error: 'Cantidad debe ser un numero' };
+  }
+
+  if (cantidadNum < 1) {
+    return { valido: false, error: 'Cantidad debe ser al menos 1' };
+  }
+
+  if (cantidadNum > 999) {
+    return { valido: false, error: 'Cantidad maxima: 999' };
+  }
+
+  return { valido: true, valor: cantidadNum };
+}
+
+/**
+ * Validador de Direccion
+ * Acepta: 10-200 caracteres (para domicilios)
+ */
+function validarDireccion(direccion) {
+  if (!direccion || String(direccion).trim().length === 0) {
+    return { valido: false, error: 'Direccion requerida para domicilios' };
+  }
+
+  var dirLimpia = String(direccion).trim();
+
+  if (dirLimpia.length < 10) {
+    return { valido: false, error: 'Direccion muy corta (min 10 caracteres)' };
+  }
+
+  if (dirLimpia.length > 200) {
+    return { valido: false, error: 'Direccion muy larga (max 200 caracteres)' };
+  }
+
+  return { valido: true, valor: dirLimpia };
+}
+
+/**
+ * Validador de Comensales
+ * Acepta: 1-20 personas
+ */
+function validarComensales(comensales) {
+  var num = parseInt(comensales);
+
+  if (isNaN(num) || num < 1 || num > 20) {
+    return {
+      valido: false,
+      error: 'Numero de comensales invalido (1-20)'
+    };
+  }
+
+  return { valido: true, valor: num };
+}
+
+/**
+ * Validador de Numero de Mesa
+ * Acepta: Enteros entre 1 y 100
+ */
+function validarNumeroMesa(numeroMesa) {
+  var num = parseInt(numeroMesa);
+
+  if (isNaN(num) || num < 1 || num > 100) {
+    return {
+      valido: false,
+      error: 'Numero de mesa invalido (1-100)'
+    };
+  }
+
+  return { valido: true, valor: num };
+}
+
+/**
+ * Validador de Metodo de Pago
+ * Acepta: Efectivo, Tarjeta, Transferencia, Mixto
+ */
+function validarMetodoPago(metodo) {
+  var metodosValidos = ['Efectivo', 'Tarjeta', 'Transferencia', 'Mixto', 'Nequi', 'Daviplata'];
+  var metodoLimpio = String(metodo || '').trim();
+
+  if (!metodoLimpio) {
+    return { valido: false, error: 'Metodo de pago requerido' };
+  }
+
+  // Buscar coincidencia case-insensitive
+  var encontrado = metodosValidos.find(function(m) {
+    return m.toLowerCase() === metodoLimpio.toLowerCase();
+  });
+
+  if (!encontrado) {
+    return {
+      valido: false,
+      error: 'Metodo de pago invalido. Opciones: ' + metodosValidos.join(', ')
+    };
+  }
+
+  return { valido: true, valor: encontrado };
+}
+
+/**
+ * Validador de Descuento
+ * Acepta: Numeros >= 0
+ */
+function validarDescuento(descuento, subtotal) {
+  var descuentoNum = parseFloat(descuento) || 0;
+  var subtotalNum = parseFloat(subtotal) || 0;
+
+  if (descuentoNum < 0) {
+    return { valido: false, error: 'Descuento no puede ser negativo' };
+  }
+
+  if (subtotalNum > 0 && descuentoNum > subtotalNum) {
+    return { valido: false, error: 'Descuento no puede ser mayor al subtotal' };
+  }
+
+  return { valido: true, valor: descuentoNum };
+}
+
+/**
+ * Validador Maestro de Cliente
+ * Valida todos los campos de un cliente
+ */
+function validarDatosCliente(datos) {
+  var errores = [];
+  var datosLimpios = {};
+
+  // Validar nombre (requerido)
+  if (datos.nombre) {
+    var validNombre = validarNombre(datos.nombre);
+    if (!validNombre.valido) {
+      errores.push(validNombre.error);
+    } else {
+      datosLimpios.nombre = validNombre.valor;
+    }
+  } else {
+    datosLimpios.nombre = '';
+  }
+
+  // Validar telefono (requerido)
+  var validTel = validarTelefono(datos.celular || datos.telefono);
+  if (!validTel.valido) {
+    errores.push(validTel.error);
+  } else {
+    datosLimpios.celular = validTel.valor;
+  }
+
+  // Validar email (opcional)
+  if (datos.email) {
+    var validEmail = validarEmail(datos.email);
+    if (!validEmail.valido) {
+      errores.push(validEmail.error);
+    } else {
+      datosLimpios.email = validEmail.valor;
+    }
+  } else {
+    datosLimpios.email = '';
+  }
+
+  // Direccion (opcional, sin validacion estricta)
+  datosLimpios.domicilio = String(datos.domicilio || datos.direccion || '').trim();
+
+  // Notas (opcional)
+  datosLimpios.notas = String(datos.notas || '').trim();
+
+  return {
+    valido: errores.length === 0,
+    errores: errores,
+    datosLimpios: datosLimpios
+  };
+}
+
+/**
+ * Validador Maestro de Pedido
+ * Valida datos basicos de un pedido
+ */
+function validarDatosPedido(datos) {
+  var errores = [];
+
+  // Validar tipo de entrega
+  var tiposValidos = ['Mesa', 'Domicilio', 'Llevar', 'Recoger'];
+  if (!datos.tipoEntrega || tiposValidos.indexOf(datos.tipoEntrega) === -1) {
+    errores.push('Tipo de entrega invalido');
+  }
+
+  // Si es mesa, validar numero
+  if (datos.tipoEntrega === 'Mesa' && datos.numeroMesa) {
+    var validMesa = validarNumeroMesa(datos.numeroMesa);
+    if (!validMesa.valido) {
+      errores.push(validMesa.error);
+    }
+  }
+
+  // Si es domicilio, validar direccion
+  if (datos.tipoEntrega === 'Domicilio' && datos.direccion) {
+    var validDir = validarDireccion(datos.direccion);
+    if (!validDir.valido) {
+      errores.push(validDir.error);
+    }
+  }
+
+  return {
+    valido: errores.length === 0,
+    errores: errores
+  };
+}
+
+/**
+ * Validador de Items de Pedido
+ * Valida array de productos
+ */
+function validarItemsPedido(items) {
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return { valido: false, error: 'Debe agregar al menos un producto' };
+  }
+
+  var errores = [];
+
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+
+    // Validar ID producto
+    if (!item.id && !item.idProducto) {
+      errores.push('Item ' + (i + 1) + ': ID de producto requerido');
+      continue;
+    }
+
+    // Validar cantidad
+    var validCant = validarCantidad(item.cantidad);
+    if (!validCant.valido) {
+      errores.push('Item ' + (i + 1) + ': ' + validCant.error);
+    }
+
+    // Validar precio
+    var validPrecio = validarPrecio(item.precio || item.precioUnitario);
+    if (!validPrecio.valido) {
+      errores.push('Item ' + (i + 1) + ': ' + validPrecio.error);
+    }
+  }
+
+  return {
+    valido: errores.length === 0,
+    errores: errores
+  };
+}
+
+Logger.log('V21 ANTIFRAGIL: Sistema de Validacion cargado');
+
 // ============================================
 // FUNCIÓN doGet - PUNTO DE ENTRADA
 // ============================================
@@ -1354,8 +1713,25 @@ function abrirMesa(idMesa, datos) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
-    Logger.log('🔑 Abriendo mesa: ' + idMesa);
-    
+    Logger.log('Abriendo mesa: ' + idMesa);
+
+    // ═══════════════════════════════════════════════════════════
+    // VALIDACIÓN ANTIFRÁGIL: Validar datos de entrada
+    // ═══════════════════════════════════════════════════════════
+    if (!idMesa) {
+      return { success: false, message: 'ID de mesa requerido' };
+    }
+
+    // Validar comensales si se proporcionan
+    if (datos && datos.comensales) {
+      var validComensales = validarComensales(datos.comensales);
+      if (!validComensales.valido) {
+        Logger.log('[MESA] Validacion comensales fallida: ' + validComensales.error);
+        return { success: false, message: validComensales.error };
+      }
+      datos.comensales = validComensales.valor;
+    }
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetMesas = ss.getSheetByName('Mesas');
     const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
@@ -1447,6 +1823,27 @@ function cerrarMesa(idMesa, datosCierre) {
     if (!idMesa) {
       Logger.log('ERROR: ID de mesa no proporcionado');
       return { success: false, message: 'ID de mesa requerido' };
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // VALIDACIÓN ANTIFRÁGIL: Validar datos de cierre
+    // ═══════════════════════════════════════════════════════════
+    if (datosCierre && datosCierre.metodoPago) {
+      var validMetodo = validarMetodoPago(datosCierre.metodoPago);
+      if (!validMetodo.valido) {
+        Logger.log('[CIERRE] Validacion metodo pago fallida: ' + validMetodo.error);
+        return { success: false, message: validMetodo.error };
+      }
+      datosCierre.metodoPago = validMetodo.valor;
+    }
+
+    if (datosCierre && datosCierre.descuento !== undefined) {
+      var validDescuento = validarDescuento(datosCierre.descuento, datosCierre.subtotal);
+      if (!validDescuento.valido) {
+        Logger.log('[CIERRE] Validacion descuento fallida: ' + validDescuento.error);
+        return { success: false, message: validDescuento.error };
+      }
+      datosCierre.descuento = validDescuento.valor;
     }
 
     var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
@@ -1750,8 +2147,21 @@ function agregarItemsPedido(idPedido, items, datosUsuario) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
-    Logger.log('🛒 Agregando items: ' + idPedido);
-    
+    Logger.log('Agregando items: ' + idPedido);
+
+    // ═══════════════════════════════════════════════════════════
+    // VALIDACIÓN ANTIFRÁGIL: Validar items antes de procesar
+    // ═══════════════════════════════════════════════════════════
+    if (!idPedido) {
+      return { success: false, message: 'ID de pedido requerido' };
+    }
+
+    var validItems = validarItemsPedido(items);
+    if (!validItems.valido) {
+      Logger.log('[ITEMS] Validacion fallida: ' + validItems.errores.join(', '));
+      return { success: false, message: validItems.errores.join(', ') };
+    }
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
     const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
@@ -1957,6 +2367,33 @@ function guardarClienteDomicilio(datos) {
 
     Logger.log('[DOMICILIO V21 ANTIFRÁGIL] Inicio (LOCK ADQUIRIDO)');
 
+    // ═══════════════════════════════════════════════════════════
+    // VALIDACIÓN ANTIFRÁGIL: Validar todos los datos de entrada
+    // ═══════════════════════════════════════════════════════════
+    var validTelefono = validarTelefono(datos.celular);
+    if (!validTelefono.valido) {
+      Logger.log('[DOMICILIO] Validacion fallida: ' + validTelefono.error);
+      return { success: false, error: validTelefono.error };
+    }
+
+    // Validar nombre si se proporciona
+    if (datos.nombre && datos.nombre.trim()) {
+      var validNombre = validarNombre(datos.nombre);
+      if (!validNombre.valido) {
+        Logger.log('[DOMICILIO] Validacion nombre fallida: ' + validNombre.error);
+        return { success: false, error: validNombre.error };
+      }
+    }
+
+    // Validar email si se proporciona
+    if (datos.email && datos.email.trim()) {
+      var validEmail = validarEmail(datos.email);
+      if (!validEmail.valido) {
+        Logger.log('[DOMICILIO] Validacion email fallida: ' + validEmail.error);
+        return { success: false, error: validEmail.error };
+      }
+    }
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     var sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
 
@@ -1968,11 +2405,8 @@ function guardarClienteDomicilio(datos) {
       sheet.setFrozenRows(1);
     }
 
-    const celular = String(datos.celular || '').replace(/\D/g, '').trim();
-    if (!celular) {
-      Logger.log('[DOMICILIO] Error: Celular vacío');
-      return { success: false, error: 'Celular requerido' };
-    }
+    // Usar celular validado y limpio
+    const celular = validTelefono.valor;
 
     // LECTURA DENTRO DEL LOCK: Obtener datos actuales
     const data = sheet.getDataRange().getValues();
@@ -2039,10 +2473,35 @@ function crearPedidoDomicilio(datosCliente, datosUsuario) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
-    
+
+    // ═══════════════════════════════════════════════════════════
+    // VALIDACIÓN ANTIFRÁGIL: Validar datos del cliente domicilio
+    // ═══════════════════════════════════════════════════════════
+    var validTelefono = validarTelefono(datosCliente.celular);
+    if (!validTelefono.valido) {
+      Logger.log('[DOMICILIO] Validacion telefono fallida: ' + validTelefono.error);
+      return { success: false, message: validTelefono.error };
+    }
+
+    // Validar dirección (requerida para domicilios)
+    var validDireccion = validarDireccion(datosCliente.direccion);
+    if (!validDireccion.valido) {
+      Logger.log('[DOMICILIO] Validacion direccion fallida: ' + validDireccion.error);
+      return { success: false, message: validDireccion.error };
+    }
+
+    // Validar nombre si se proporciona
+    if (datosCliente.nombre && datosCliente.nombre.trim()) {
+      var validNombre = validarNombre(datosCliente.nombre);
+      if (!validNombre.valido) {
+        Logger.log('[DOMICILIO] Validacion nombre fallida: ' + validNombre.error);
+        return { success: false, message: validNombre.error };
+      }
+    }
+
     const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
-    
+
     guardarClienteDomicilio(datosCliente);
     
     const celularLimpio = String(datosCliente.celular || '').replace(/\D/g, '').trim();

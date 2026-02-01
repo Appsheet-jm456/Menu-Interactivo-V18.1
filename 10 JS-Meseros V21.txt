@@ -31,6 +31,328 @@ var intervalSyncBadge = null;        // Intervalo de polling
 var estadoAnteriorCocina = null;     // Estado anterior para detectar cambios
 var SYNC_INTERVAL_MS = 15000;        // Polling cada 15 segundos
 
+// ═══════════════════════════════════════════════════════════
+// SISTEMA DE VALIDACIÓN ANTIFRÁGIL V21 - FRONTEND
+// Validación en tiempo real para mejor UX
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Validar telefono en tiempo real
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @returns {boolean} true si es valido
+ */
+function validarTelefonoInput(input) {
+  var valor = input.value.trim().replace(/\D/g, '');
+
+  if (valor.length < 7 || valor.length > 10) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Telefono debe tener 7-10 digitos');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Validar nombre en tiempo real
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @returns {boolean} true si es valido
+ */
+function validarNombreInput(input) {
+  var valor = input.value.trim();
+
+  if (valor.length < 2) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Nombre muy corto (min 2 caracteres)');
+    return false;
+  }
+
+  if (valor.length > 100) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Nombre muy largo (max 100 caracteres)');
+    return false;
+  }
+
+  if (/^\d+$/.test(valor)) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Nombre no puede ser solo numeros');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Validar email en tiempo real
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @returns {boolean} true si es valido
+ */
+function validarEmailInput(input) {
+  var valor = input.value.trim();
+
+  // Email opcional: vacio es valido
+  if (valor === '') {
+    input.classList.remove('input-error');
+    ocultarErrorCampo(input);
+    return true;
+  }
+
+  var regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!regex.test(valor)) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Email invalido');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Validar direccion en tiempo real
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @returns {boolean} true si es valido
+ */
+function validarDireccionInput(input) {
+  var valor = input.value.trim();
+
+  if (valor.length < 10) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Direccion muy corta (min 10 caracteres)');
+    return false;
+  }
+
+  if (valor.length > 200) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Direccion muy larga (max 200 caracteres)');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Validar numero de comensales
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @returns {boolean} true si es valido
+ */
+function validarComensalesInput(input) {
+  var valor = parseInt(input.value);
+
+  if (isNaN(valor) || valor < 1 || valor > 20) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Comensales debe ser entre 1 y 20');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Validar precio/cantidad positiva
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @param {string} nombre - Nombre del campo para mensaje
+ * @returns {boolean} true si es valido
+ */
+function validarNumeroPositivo(input, nombre) {
+  var valor = parseFloat(input.value);
+
+  if (isNaN(valor) || valor <= 0) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, nombre + ' debe ser mayor a 0');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Validar descuento
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @param {number} subtotal - Subtotal para comparar
+ * @returns {boolean} true si es valido
+ */
+function validarDescuentoInput(input, subtotal) {
+  var valor = parseFloat(input.value) || 0;
+
+  if (valor < 0) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Descuento no puede ser negativo');
+    return false;
+  }
+
+  if (subtotal && valor > subtotal) {
+    input.classList.add('input-error');
+    mostrarErrorCampo(input, 'Descuento no puede ser mayor al subtotal');
+    return false;
+  }
+
+  input.classList.remove('input-error');
+  ocultarErrorCampo(input);
+  return true;
+}
+
+/**
+ * Mostrar error debajo del campo
+ * @param {HTMLInputElement} input - Campo de entrada
+ * @param {string} mensaje - Mensaje de error
+ */
+function mostrarErrorCampo(input, mensaje) {
+  // Remover error anterior si existe
+  var errorPrevio = input.parentElement.querySelector('.campo-error');
+  if (errorPrevio) {
+    errorPrevio.remove();
+  }
+
+  var divError = document.createElement('div');
+  divError.className = 'campo-error';
+  divError.textContent = mensaje;
+
+  input.parentElement.appendChild(divError);
+}
+
+/**
+ * Ocultar error del campo
+ * @param {HTMLInputElement} input - Campo de entrada
+ */
+function ocultarErrorCampo(input) {
+  var error = input.parentElement.querySelector('.campo-error');
+  if (error) {
+    error.remove();
+  }
+}
+
+/**
+ * Validar formulario completo de domicilio
+ * @returns {boolean} true si todos los campos son validos
+ */
+function validarFormularioDomicilio() {
+  // IDs del modal de domicilio en Panel Meseros
+  var nombre = document.getElementById('domNombre');
+  var telefono = document.getElementById('domCelular');
+  var direccion = document.getElementById('domDireccion');
+
+  var valido = true;
+
+  // Validar nombre (requerido)
+  if (nombre) {
+    if (!nombre.value.trim()) {
+      nombre.classList.add('input-error');
+      mostrarErrorCampo(nombre, 'Nombre requerido');
+      valido = false;
+    } else if (!validarNombreInput(nombre)) {
+      valido = false;
+    }
+  }
+
+  // Validar telefono (requerido)
+  if (telefono) {
+    if (!telefono.value.trim()) {
+      telefono.classList.add('input-error');
+      mostrarErrorCampo(telefono, 'Celular requerido');
+      valido = false;
+    } else if (!validarTelefonoInput(telefono)) {
+      valido = false;
+    }
+  }
+
+  // Validar direccion (requerida)
+  if (direccion) {
+    if (!direccion.value.trim()) {
+      direccion.classList.add('input-error');
+      mostrarErrorCampo(direccion, 'Direccion requerida');
+      valido = false;
+    } else if (!validarDireccionInput(direccion)) {
+      valido = false;
+    }
+  }
+
+  return valido;
+}
+
+/**
+ * Validar formulario de abrir mesa
+ * @returns {boolean} true si es valido
+ */
+function validarFormularioAbrirMesa() {
+  var comensales = document.getElementById('inputComensales');
+
+  if (comensales) {
+    return validarComensalesInput(comensales);
+  }
+
+  return true;
+}
+
+/**
+ * Limpiar todos los errores de validacion de un formulario
+ * @param {HTMLElement} contenedor - Contenedor del formulario
+ */
+function limpiarErroresValidacion(contenedor) {
+  if (!contenedor) return;
+
+  var errores = contenedor.querySelectorAll('.campo-error');
+  errores.forEach(function(error) {
+    error.remove();
+  });
+
+  var inputsError = contenedor.querySelectorAll('.input-error');
+  inputsError.forEach(function(input) {
+    input.classList.remove('input-error');
+  });
+}
+
+/**
+ * Configurar validacion en tiempo real para un input
+ * @param {string} inputId - ID del input
+ * @param {string} tipo - Tipo de validacion: 'telefono', 'nombre', 'email', 'direccion', 'comensales'
+ */
+function configurarValidacionTiempoReal(inputId, tipo) {
+  var input = document.getElementById(inputId);
+  if (!input) return;
+
+  input.addEventListener('blur', function() {
+    switch (tipo) {
+      case 'telefono':
+        validarTelefonoInput(this);
+        break;
+      case 'nombre':
+        validarNombreInput(this);
+        break;
+      case 'email':
+        validarEmailInput(this);
+        break;
+      case 'direccion':
+        validarDireccionInput(this);
+        break;
+      case 'comensales':
+        validarComensalesInput(this);
+        break;
+    }
+  });
+
+  // Para telefono, limpiar caracteres no numericos mientras escribe
+  if (tipo === 'telefono') {
+    input.addEventListener('input', function() {
+      this.value = this.value.replace(/\D/g, '');
+    });
+  }
+}
+
+console.log('V21 ANTIFRAGIL: Sistema de Validacion Frontend cargado');
+
 // ============================================
 // INICIALIZACION
 // ============================================
@@ -310,6 +632,12 @@ function abrirModalAbrirMesa() {
   document.getElementById('inputComensales').value = 2;
   document.getElementById('inputMeseroAsignado').value = usuarioMesero ? usuarioMesero.nombre : '';
   document.getElementById('inputNotasMesa').value = '';
+
+  // V21 ANTIFRÁGIL: Limpiar errores y configurar validación
+  var modal = document.getElementById('modalAbrirMesa');
+  if (modal) limpiarErroresValidacion(modal);
+  configurarValidacionTiempoReal('inputComensales', 'comensales');
+
   abrirModal('modalAbrirMesa');
 }
 
@@ -322,6 +650,13 @@ function cambiarComensales(d) {
 
 function confirmarAbrirMesa() {
   if(!mesaSeleccionada||!usuarioMesero) return;
+
+  // V21 ANTIFRÁGIL: Validar formulario antes de enviar
+  if (!validarFormularioAbrirMesa()) {
+    mostrarToast('error', 'Error', 'Por favor corrija los errores');
+    return;
+  }
+
   var com = parseInt(document.getElementById('inputComensales').value);
   var not = document.getElementById('inputNotasMesa').value.trim();
   mostrarLoading(true, 'Abriendo mesa...');
@@ -1377,6 +1712,16 @@ function abrirModalDomicilio() {
   document.getElementById('domCelular').value='';
   document.getElementById('domDireccion').value='';
   document.getElementById('domNotas').value='';
+
+  // V21 ANTIFRÁGIL: Limpiar errores de validación previos
+  var modal = document.getElementById('modalDomicilio');
+  if (modal) limpiarErroresValidacion(modal);
+
+  // Configurar validación en tiempo real
+  configurarValidacionTiempoReal('domNombre', 'nombre');
+  configurarValidacionTiempoReal('domCelular', 'telefono');
+  configurarValidacionTiempoReal('domDireccion', 'direccion');
+
   abrirModal('modalDomicilio');
 }
 
@@ -1408,6 +1753,12 @@ function buscarClienteAutocompletar() {
 function seleccionarClienteDom(n,c,d){document.getElementById('domNombre').value=n;document.getElementById('domCelular').value=c;document.getElementById('domDireccion').value=d;document.getElementById('autocompleteClientes').style.display='none';}
 
 function crearPedidoDomicilio() {
+  // V21 ANTIFRÁGIL: Validar formulario antes de enviar
+  if (!validarFormularioDomicilio()) {
+    mostrarToast('error', 'Error', 'Por favor corrija los errores marcados');
+    return;
+  }
+
   var nom=document.getElementById('domNombre').value.trim();
   var cel=document.getElementById('domCelular').value.trim();
   var dir=document.getElementById('domDireccion').value.trim();
