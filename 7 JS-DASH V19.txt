@@ -1,0 +1,2402 @@
+<script>
+// ============================================
+// VARIABLES GLOBALES - DASHBOARD GIP V18
+// FASE 8.3: Mejora visualización clientes
+// ============================================
+let usuarioDashboard = null;
+let configuracion = {};
+let pedidosCache = [];
+let pedidoSeleccionado = null;
+let clientesCache = []; // FASE 8.3: Cache de clientes
+let vistaActual = 'admin';
+let filtrosActuales = {
+  fecha: null,
+  etapa: 'Todos',
+  estadoCierre: 'Todos',
+  tipoEntrega: 'Todos',
+  vistaRol: null
+};
+
+// Estados disponibles para el dropdown de Super Admin
+const ESTADOS_DISPONIBLES = ['Solicitado', 'Recibido', 'Enviado', 'Entregado'];
+
+// ============================================
+// FASE 8.3: FUNCIONES MAPPER DE CLIENTES
+// ============================================
+
+/**
+ * Obtener nombre de cliente desde el cache
+ * @param {string} idCliente - ID o celular del cliente
+ * @returns {string} Nombre del cliente o texto por defecto
+ */
+function obtenerNombreCliente(idCliente) {
+  if (!idCliente) return 'Sin identificar';
+  const idStr = String(idCliente).trim();
+  
+  // Cliente genérico
+  if (idStr === '2222222') return 'Consumidor Final';
+  
+  // Buscar en cache
+  const cliente = clientesCache.find(function(c) {
+    return String(c.id).trim() === idStr || String(c.celular).trim() === idStr;
+  });
+  
+  if (cliente && cliente.nombre) return cliente.nombre;
+  return 'Cliente Nuevo';
+}
+
+/**
+ * Obtener datos completos del cliente desde el cache
+ * @param {string} idCliente - ID o celular del cliente
+ * @returns {Object} Objeto con nombre, celular y email
+ */
+function obtenerDatosClienteLocal(idCliente) {
+  if (!idCliente) return { nombre: 'Sin identificar', celular: '-', email: '-' };
+  const idStr = String(idCliente).trim();
+  
+  // Cliente genérico
+  if (idStr === '2222222') {
+    return { nombre: 'Consumidor Final', celular: '-', email: '-' };
+  }
+  
+  // Buscar en cache
+  const cliente = clientesCache.find(function(c) {
+    return String(c.id).trim() === idStr || String(c.celular).trim() === idStr;
+  });
+  
+  if (cliente) {
+    return {
+      nombre: cliente.nombre || 'Sin nombre',
+      celular: cliente.celular || '-',
+      email: cliente.email || '-'
+    };
+  }
+  
+  return { nombre: 'Cliente Nuevo', celular: idStr, email: '-' };
+}
+
+/**
+ * Obtener badge visual para tipo de entrega
+ * @param {string} tipo - Tipo de entrega
+ * @returns {string} HTML del badge
+ */
+function obtenerBadgeTipoEntrega(tipo) {
+  const badges = {
+    'Mesa': '<span class="badge-tipo-entrega" style="background:#8B5CF6;color:white;font-size:11px;padding:2px 8px;border-radius:4px;margin-left:8px;">🪑 Mesa</span>',
+    'Domicilio': '<span class="badge-tipo-entrega" style="background:#F59E0B;color:white;font-size:11px;padding:2px 8px;border-radius:4px;margin-left:8px;">🏠 Domicilio</span>',
+    'Pedido Rapido': '<span class="badge-tipo-entrega" style="background:#10B981;color:white;font-size:11px;padding:2px 8px;border-radius:4px;margin-left:8px;">⚡ Rápido</span>',
+    'Recoger en tienda': '<span class="badge-tipo-entrega" style="background:#3B82F6;color:white;font-size:11px;padding:2px 8px;border-radius:4px;margin-left:8px;">🏪 Recoger</span>'
+  };
+  return badges[tipo] || '<span class="badge-tipo-entrega" style="background:#6B7280;color:white;font-size:11px;padding:2px 8px;border-radius:4px;margin-left:8px;">' + (tipo || '-') + '</span>';
+}
+
+// ============================================
+// INICIALIZACIÓN
+// ============================================
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🚀 Dashboard V18 - Fase 8.3 iniciado');
+  
+  const hoy = obtenerFechaHoyColombia();
+  document.getElementById('filtroFecha').value = hoy;
+  filtrosActuales.fecha = hoy;
+  
+  actualizarReloj();
+  setInterval(actualizarReloj, 1000);
+  
+  cargarConfiguracion();
+  verificarSesionDashboard();
+});
+
+function obtenerFechaHoyColombia() {
+  const ahora = new Date();
+  const offsetColombiaMinutos = -5 * 60;
+  const offsetLocalMinutos = ahora.getTimezoneOffset();
+  const diferenciaMinutos = offsetLocalMinutos + offsetColombiaMinutos;
+  
+  const fechaColombia = new Date(ahora.getTime() - diferenciaMinutos * 60 * 1000);
+  
+  const year = fechaColombia.getFullYear();
+  const month = String(fechaColombia.getMonth() + 1).padStart(2, '0');
+  const day = String(fechaColombia.getDate()).padStart(2, '0');
+  
+  return year + '-' + month + '-' + day;
+}
+
+function actualizarReloj() {
+  const ahora = new Date();
+  const opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+  document.getElementById('currentDate').textContent = ahora.toLocaleDateString('es-CO', opciones);
+  document.getElementById('currentTime').textContent = ahora.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+}
+
+function cargarConfiguracion() {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        configuracion = result.config;
+        console.log('✅ Configuración cargada:', configuracion);
+        aplicarPersonalizacion();
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('❌ Error al cargar configuración:', error);
+    })
+    .obtenerConfiguracion();
+}
+
+function aplicarPersonalizacion() {
+  if (configuracion.colorPrimario) {
+    document.documentElement.style.setProperty('--primary', configuracion.colorPrimario);
+    document.documentElement.style.setProperty('--primary-dark', ajustarColor(configuracion.colorPrimario, -20));
+    document.documentElement.style.setProperty('--primary-light', ajustarColor(configuracion.colorPrimario, 20));
+  }
+  
+  if (configuracion.colorSecundario) {
+    document.documentElement.style.setProperty('--secondary', configuracion.colorSecundario);
+    document.documentElement.style.setProperty('--secondary-dark', ajustarColor(configuracion.colorSecundario, -20));
+    document.documentElement.style.setProperty('--bg-sidebar', configuracion.colorSecundario);
+  }
+  
+  if (configuracion.colorAcento) {
+    document.documentElement.style.setProperty('--warning', configuracion.colorAcento);
+  }
+  
+  const loginHeaderP = document.querySelector('.login-header p');
+  if (loginHeaderP && configuracion.nombreEmpresa) {
+    loginHeaderP.textContent = configuracion.nombreEmpresa + ' - Dashboard';
+  }
+  
+  const brandName = document.querySelector('.brand-name');
+  if (brandName && configuracion.nombreEmpresa) {
+    brandName.textContent = configuracion.nombreEmpresa;
+  }
+  
+  console.log('✅ Personalización aplicada');
+}
+
+function ajustarColor(hex, porcentaje) {
+  if (!hex || hex.length < 7) return hex;
+  
+  let r = parseInt(hex.slice(1, 3), 16);
+  let g = parseInt(hex.slice(3, 5), 16);
+  let b = parseInt(hex.slice(5, 7), 16);
+  
+  r = Math.max(0, Math.min(255, r + (r * porcentaje / 100)));
+  g = Math.max(0, Math.min(255, g + (g * porcentaje / 100)));
+  b = Math.max(0, Math.min(255, b + (b * porcentaje / 100)));
+  
+  const rr = Math.round(r).toString(16).padStart(2, '0');
+  const gg = Math.round(g).toString(16).padStart(2, '0');
+  const bb = Math.round(b).toString(16).padStart(2, '0');
+  
+  return '#' + rr + gg + bb;
+}
+
+// ============================================
+// AUTENTICACIÓN DASHBOARD
+// ============================================
+function verificarSesionDashboard() {
+  const sesionGuardada = localStorage.getItem('usuarioDashboard');
+  if (sesionGuardada) {
+    try {
+      usuarioDashboard = JSON.parse(sesionGuardada);
+      if (usuarioDashboard && usuarioDashboard.esInterno) {
+        console.log('👤 Sesión recuperada para:', usuarioDashboard.nombre);
+        iniciarDashboard();
+      } else {
+        mostrarLoginDashboard();
+      }
+    } catch (error) {
+      console.error('❌ Error al recuperar sesión:', error);
+      mostrarLoginDashboard();
+    }
+  } else {
+    mostrarLoginDashboard();
+  }
+}
+
+function mostrarLoginDashboard() {
+  document.getElementById('loginDashboard').classList.add('active');
+  document.getElementById('dashboardMain').classList.remove('active');
+}
+
+function loginDashboard(event) {
+  event.preventDefault();
+  
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  
+  if (!email || !password) {
+    mostrarErrorLogin('Por favor complete todos los campos');
+    return;
+  }
+  
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      if (result.success) {
+        usuarioDashboard = result.user;
+        localStorage.setItem('usuarioDashboard', JSON.stringify(usuarioDashboard));
+        
+        document.getElementById('loginEmail').value = '';
+        document.getElementById('loginPassword').value = '';
+        document.getElementById('loginError').classList.remove('show');
+        
+        console.log('✅ Login exitoso:', usuarioDashboard.nombre, '| Super Admin:', usuarioDashboard.esSuperAdmin);
+        iniciarDashboard();
+      } else {
+        mostrarErrorLogin(result.message || 'Credenciales incorrectas');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error en login:', error);
+      mostrarErrorLogin('Error de conexión. Intente nuevamente.');
+    })
+    .validarLoginDashboard(email, password);
+}
+
+function mostrarErrorLogin(mensaje) {
+  const errorDiv = document.getElementById('loginError');
+  errorDiv.textContent = mensaje;
+  errorDiv.classList.add('show');
+}
+
+function cerrarSesionDashboard() {
+  if (confirm('¿Está seguro que desea cerrar sesión?')) {
+    localStorage.removeItem('usuarioDashboard');
+    usuarioDashboard = null;
+    pedidosCache = [];
+    clientesCache = []; // FASE 8.3: Limpiar cache de clientes
+    mostrarLoginDashboard();
+    mostrarToast('info', 'Sesión cerrada', 'Ha cerrado sesión correctamente');
+  }
+}
+
+// ============================================
+// INICIALIZACIÓN DEL DASHBOARD
+// ============================================
+function iniciarDashboard() {
+  document.getElementById('loginDashboard').classList.remove('active');
+  document.getElementById('dashboardMain').classList.add('active');
+  
+  const inicial = usuarioDashboard.nombre ? usuarioDashboard.nombre.charAt(0).toUpperCase() : 'U';
+  document.getElementById('userInitial').textContent = inicial;
+  document.getElementById('sidebarUserName').textContent = usuarioDashboard.nombre || 'Usuario';
+  
+  // Mostrar badge de Super Admin si aplica
+  const roleSpan = document.getElementById('sidebarUserRole');
+  if (usuarioDashboard.esSuperAdmin) {
+    roleSpan.innerHTML = usuarioDashboard.rol + ' <span style="background: #10B981; color: white; font-size: 9px; padding: 2px 6px; border-radius: 4px; margin-left: 4px;">ADMIN</span>';
+  } else {
+    roleSpan.textContent = usuarioDashboard.rol || 'Rol';
+  }
+  
+  configurarVisibilidadPorRol();
+  determinarVistaInicial();
+  cargarDatosDashboard();
+  
+  console.log('✅ Dashboard iniciado para:', usuarioDashboard.nombre);
+}
+
+function configurarVisibilidadPorRol() {
+  const rol = (usuarioDashboard.rol || '').toLowerCase();
+  
+  const statVentas = document.querySelector('.stat-card.stat-sales');
+  if (statVentas) {
+    if (rol === 'cocina' || rol === 'domiciliario' || rol === 'repartidor' || rol === 'cajero') {
+      statVentas.style.display = 'none';
+    } else {
+      statVentas.style.display = 'flex';
+    }
+  }
+  
+  const navItemAdmin = document.querySelector('[data-vista="admin"]');
+  const navItemCocina = document.querySelector('[data-vista="cocina"]');
+  const navItemDomicilio = document.querySelector('[data-vista="domicilio"]');
+  
+  if (rol === 'cocina') {
+    if (navItemAdmin) navItemAdmin.style.display = 'none';
+    if (navItemCocina) navItemCocina.style.display = 'flex';
+    if (navItemDomicilio) navItemDomicilio.style.display = 'none';
+  } else if (rol === 'domiciliario' || rol === 'repartidor') {
+    if (navItemAdmin) navItemAdmin.style.display = 'none';
+    if (navItemCocina) navItemCocina.style.display = 'none';
+    if (navItemDomicilio) navItemDomicilio.style.display = 'flex';
+  } else {
+    if (navItemAdmin) navItemAdmin.style.display = 'flex';
+    if (navItemCocina) navItemCocina.style.display = 'flex';
+    if (navItemDomicilio) navItemDomicilio.style.display = 'flex';
+  }
+}
+
+function determinarVistaInicial() {
+  const rol = (usuarioDashboard.rol || '').toLowerCase();
+  
+  if (rol === 'cocina') {
+    cambiarVista('cocina', document.querySelector('[data-vista="cocina"]'));
+  } else if (rol === 'domiciliario' || rol === 'repartidor') {
+    cambiarVista('domicilio', document.querySelector('[data-vista="domicilio"]'));
+  } else {
+    cambiarVista('admin', document.querySelector('[data-vista="admin"]'));
+  }
+}
+
+// ============================================
+// NAVEGACIÓN Y VISTAS
+// ============================================
+function cambiarVista(vista, elemento) {
+  vistaActual = vista;
+  
+  document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
+  if (elemento) elemento.classList.add('active');
+  
+  const titulos = {
+    'admin': { titulo: '📊 Dashboard Pedidos', subtitulo: 'Vista completa de todos los pedidos' },
+    'cocina': { titulo: '👨‍🍳 Pedidos Comanda', subtitulo: 'Pedidos pendientes y en preparación' },
+    'domicilio': { titulo: '🛵 Pedidos Domicilio', subtitulo: 'Pedidos listos para entregar' }
+  };
+  
+  document.getElementById('vistaTitle').textContent = titulos[vista].titulo;
+  document.getElementById('vistaSubtitle').textContent = titulos[vista].subtitulo;
+  
+  filtrosActuales.vistaRol = vista === 'admin' ? null : vista;
+  
+  cargarDatosDashboard();
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.querySelector('.sidebar-overlay') || crearOverlay();
+  
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('show');
+}
+
+function crearOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'sidebar-overlay';
+  overlay.onclick = toggleSidebar;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+// ============================================
+// CARGA DE DATOS
+// ============================================
+function cargarDatosDashboard() {
+  mostrarLoadingTabla(true);
+  
+  const filtros = {
+    fecha: filtrosActuales.fecha,
+    etapa: filtrosActuales.etapa,
+    estadoCierre: filtrosActuales.estadoCierre,
+    tipoEntrega: filtrosActuales.tipoEntrega,
+    vistaRol: filtrosActuales.vistaRol
+  };
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoadingTabla(false);
+      
+      if (result.success) {
+        pedidosCache = result.pedidos;
+        // FASE 8.3: Cargar lista de clientes
+        if (result.clientes) {
+          clientesCache = result.clientes;
+          console.log('✅ Clientes cargados:', clientesCache.length);
+        }
+        renderizarTablaPedidos();
+        actualizarEstadisticas();
+        actualizarBadges();
+      } else {
+        console.error('❌ Error al cargar pedidos:', result.message);
+        mostrarToast('error', 'Error', result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoadingTabla(false);
+      console.error('❌ Error de conexión:', error);
+      mostrarToast('error', 'Error de conexión', 'No se pudieron cargar los pedidos');
+    })
+    .obtenerPedidosDashboard(filtros);
+}
+
+function refrescarDatos() {
+  mostrarToast('info', 'Actualizando', 'Cargando datos más recientes...');
+  cargarDatosDashboard();
+}
+
+// ============================================
+// FILTROS
+// ============================================
+function aplicarFiltros() {
+  filtrosActuales.fecha = document.getElementById('filtroFecha').value || null;
+  filtrosActuales.etapa = document.getElementById('filtroEtapa').value;
+  filtrosActuales.estadoCierre = document.getElementById('filtroEstado').value;
+  filtrosActuales.tipoEntrega = document.getElementById('filtroTipoEntrega').value;
+  
+  cargarDatosDashboard();
+}
+
+function limpiarFiltros() {
+  const hoy = obtenerFechaHoyColombia();
+  document.getElementById('filtroFecha').value = hoy;
+  document.getElementById('filtroEtapa').value = 'Todos';
+  document.getElementById('filtroEstado').value = 'Todos';
+  document.getElementById('filtroTipoEntrega').value = 'Todos';
+  
+  filtrosActuales.fecha = hoy;
+  filtrosActuales.etapa = 'Todos';
+  filtrosActuales.estadoCierre = 'Todos';
+  filtrosActuales.tipoEntrega = 'Todos';
+  
+  cargarDatosDashboard();
+}
+
+// ============================================
+// RENDERIZADO DE TABLA
+// ============================================
+function renderizarTablaPedidos() {
+  const tbody = document.getElementById('tablaPedidos');
+  const emptyState = document.getElementById('emptyState');
+  const countSpan = document.getElementById('pedidosCount');
+  
+  countSpan.textContent = '(' + pedidosCache.length + ')';
+  
+  if (pedidosCache.length === 0) {
+    tbody.innerHTML = '';
+    emptyState.style.display = 'block';
+    return;
+  }
+  
+  emptyState.style.display = 'none';
+  
+  const moneda = configuracion.moneda || '$';
+  let html = '';
+  
+  pedidosCache.forEach(function(pedido) {
+    const fecha = new Date(pedido.fechaPedido);
+    const fechaFormateada = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
+    const horaFormateada = fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    
+    const badgeEtapa = obtenerBadgeEtapa(pedido.estadoLogistico);
+    const badgeEstado = obtenerBadgeEstado(pedido.estadoCierre);
+    
+    // FASE 8.3: Usar mapper para nombre de cliente
+    const nombreCliente = obtenerNombreCliente(pedido.idCliente);
+    
+    html += '<tr>';
+    html += '<td data-label="ID">';
+    html += '<strong>' + pedido.idPedido + '</strong>';
+    html += '<span style="margin-left: 8px;">' + badgeEtapa.replace('class="badge ', 'class="badge ') + '</span>';
+    html += '</td>';
+    html += '<td data-label="Cliente">';
+    html += '<div style="font-weight: 500;">' + nombreCliente + '</div>';
+    html += '<div style="font-size: 12px; color: var(--text-secondary);">' + (pedido.telefonoCliente || pedido.telefonoContacto || '-') + '</div>';
+    html += '</td>';
+    html += '<td data-label="Fecha">';
+    html += '<div>' + fechaFormateada + '</div>';
+    html += '<div style="font-size: 12px; color: var(--text-secondary);">' + horaFormateada + '</div>';
+    html += '</td>';
+    html += '<td data-label="Etapa">' + badgeEtapa + '</td>';
+    html += '<td data-label="Total"><strong style="color: var(--primary); font-size: 16px;">' + moneda + formatearPrecio(pedido.total) + '</strong></td>';
+    html += '<td data-label="Entrega">';
+    html += '<div style="font-size: 13px;">' + (pedido.tipoEntrega || '-') + '</div>';
+    html += '<div style="font-size: 11px; color: var(--text-secondary); max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="' + (pedido.direccionEntrega || '') + '">' + (pedido.direccionEntrega || '-') + '</div>';
+    html += '</td>';
+    html += '<td data-label="Estado">' + badgeEstado + '</td>';
+    html += '<td data-label="Acción">';
+    html += '<button class="btn-view" onclick="verDetallePedido(\'' + pedido.idPedido + '\')">';
+    html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">';
+    html += '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>';
+    html += '<circle cx="12" cy="12" r="3"/>';
+    html += '</svg>';
+    html += 'Ver / Gestionar';
+    html += '</button>';
+    html += '</td>';
+    html += '</tr>';
+  });
+  
+  tbody.innerHTML = html;
+}
+
+function obtenerBadgeEtapa(etapa) {
+  const badges = {
+    'Solicitado': '<span class="badge badge-solicitado">📋 Solicitado</span>',
+    'Recibido': '<span class="badge badge-recibido">🍳 En Preparación</span>',
+    'Enviado': '<span class="badge badge-enviado">🚚 En Camino</span>',
+    'Entregado': '<span class="badge badge-entregado">✅ Entregado</span>',
+    'Cancelado': '<span class="badge badge-cancelado">❌ Cancelado</span>'
+  };
+  return badges[etapa] || '<span class="badge">' + etapa + '</span>';
+}
+
+function obtenerBadgeEstado(estado) {
+  const badges = {
+    'Abierto': '<span class="badge badge-abierto">🟢 Abierto</span>',
+    'Cerrado': '<span class="badge badge-cerrado">🔵 Cerrado</span>',
+    'Cancelado': '<span class="badge badge-cancelado">🔴 Cancelado</span>'
+  };
+  return badges[estado] || '<span class="badge">' + estado + '</span>';
+}
+
+function mostrarLoadingTabla(mostrar) {
+  const tbody = document.getElementById('tablaPedidos');
+  const emptyState = document.getElementById('emptyState');
+  
+  if (mostrar) {
+    emptyState.style.display = 'none';
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="8"><div class="table-loading"><div class="spinner"></div><span>Cargando pedidos...</span></div></td></tr>';
+  }
+}
+
+// ============================================
+// ESTADÍSTICAS
+// ============================================
+function actualizarEstadisticas() {
+  const stats = {
+    pendientes: pedidosCache.filter(function(p) { return p.estadoLogistico === 'Solicitado'; }).length,
+    preparacion: pedidosCache.filter(function(p) { return p.estadoLogistico === 'Recibido'; }).length,
+    enviados: pedidosCache.filter(function(p) { return p.estadoLogistico === 'Enviado'; }).length,
+    entregados: pedidosCache.filter(function(p) { return p.estadoLogistico === 'Entregado'; }).length,
+    ventas: pedidosCache.filter(function(p) { return p.estadoCierre !== 'Cancelado'; }).reduce(function(sum, p) { return sum + (p.total || 0); }, 0)
+  };
+  
+  const moneda = configuracion.moneda || '$';
+  
+  document.getElementById('statPendientes').textContent = stats.pendientes;
+  document.getElementById('statPreparacion').textContent = stats.preparacion;
+  document.getElementById('statEnviados').textContent = stats.enviados;
+  document.getElementById('statEntregados').textContent = stats.entregados;
+  document.getElementById('statVentas').textContent = moneda + formatearPrecio(stats.ventas);
+}
+
+function actualizarBadges() {
+  document.getElementById('badgeAdmin').textContent = pedidosCache.length;
+  document.getElementById('badgeCocina').textContent = pedidosCache.filter(function(p) { return ['Solicitado', 'Recibido'].includes(p.estadoLogistico); }).length;
+  document.getElementById('badgeDomicilio').textContent = pedidosCache.filter(function(p) { return p.estadoLogistico === 'Enviado'; }).length;
+}
+
+// ============================================
+// MODAL DETALLE DE PEDIDO
+// ============================================
+function verDetallePedido(idPedido) {
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      if (result.success) {
+        pedidoSeleccionado = result.pedido;
+        renderizarModalDetalle();
+        document.getElementById('modalDetalle').classList.add('show');
+      } else {
+        mostrarToast('error', 'Error', result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al cargar detalle:', error);
+      mostrarToast('error', 'Error', 'No se pudo cargar el detalle del pedido');
+    })
+    .obtenerDetallePedidoDashboard(idPedido);
+}
+
+function renderizarModalDetalle() {
+  if (!pedidoSeleccionado) return;
+  
+  const p = pedidoSeleccionado;
+  const moneda = configuracion.moneda || '$';
+  
+  // FASE 8.3: Obtener datos del cliente desde cache local
+  const datosCliente = obtenerDatosClienteLocal(p.idCliente);
+  
+  // Header
+  document.getElementById('modalIdPedido').textContent = '#' + p.idPedido;
+  document.getElementById('modalEstadoBadge').innerHTML = obtenerBadgeEtapa(p.estadoLogistico);
+  
+  // FASE 8.3: Info cliente mejorada con badge de tipo entrega
+  document.getElementById('modalClienteNombre').innerHTML = datosCliente.nombre + ' ' + obtenerBadgeTipoEntrega(p.tipoEntrega);
+  document.getElementById('modalClienteTelefono').textContent = datosCliente.celular || p.telefonoContacto || '-';
+  document.getElementById('modalClienteEmail').textContent = datosCliente.email || '-';
+  document.getElementById('modalTipoEntrega').textContent = p.tipoEntrega || '-';
+  
+  // Dirección con herramientas para domicilios
+  const direccionContainer = document.getElementById('direccionContainer');
+  if (p.tipoEntrega === 'Domicilio' && p.direccionEntrega) {
+    direccionContainer.style.display = 'block';
+    document.getElementById('modalDireccion').textContent = p.direccionEntrega;
+    
+    // Verificar si ya existen los botones de herramientas
+    let herramientasContainer = document.getElementById('herramientasDomicilio');
+    
+    if (!herramientasContainer) {
+      // Crear contenedor de herramientas si no existe
+      herramientasContainer = document.createElement('div');
+      herramientasContainer.id = 'herramientasDomicilio';
+      herramientasContainer.className = 'herramientas-domicilio';
+      herramientasContainer.style.cssText = 'display: flex; gap: 10px; margin-top: 12px;';
+      
+      // Insertar después del elemento de dirección
+      direccionContainer.appendChild(herramientasContainer);
+    }
+    
+    // Renderizar botones de herramientas
+    herramientasContainer.innerHTML = '<button class="btn-tool btn-copiar" onclick="copiarDireccion()" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; background: var(--gray-100); border: 2px solid var(--border-color); border-radius: var(--border-radius-sm); font-size: 14px; font-weight: 600; color: var(--text-primary); cursor: pointer; transition: var(--transition-fast);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copiar 📋</span></button><button class="btn-tool btn-gps" onclick="abrirGPS()" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; background: linear-gradient(135deg, #4285F4, #34A853); border: none; border-radius: var(--border-radius-sm); font-size: 14px; font-weight: 600; color: white; cursor: pointer; transition: var(--transition-fast);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>Abrir GPS 📍</span></button>';
+    
+    // Añadir estilos dinámicos para los botones si no existen
+    if (!document.getElementById('herramientasStyles')) {
+      const styleTag = document.createElement('style');
+      styleTag.id = 'herramientasStyles';
+      styleTag.textContent = '.btn-tool:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); } .btn-copiar:hover { background: var(--gray-200); border-color: var(--gray-300); } .btn-gps:hover { box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4); }';
+      document.head.appendChild(styleTag);
+    }
+  } else {
+    direccionContainer.style.display = 'none';
+    // Eliminar contenedor de herramientas si existe
+    const herramientasContainer = document.getElementById('herramientasDomicilio');
+    if (herramientasContainer) {
+      herramientasContainer.remove();
+    }
+  }
+  
+  // Items
+  const itemsList = document.getElementById('modalItemsList');
+  if (p.items && p.items.length > 0) {
+    let itemsHtml = '';
+    p.items.forEach(function(item) {
+      itemsHtml += '<div class="item-row"><div class="item-info"><div class="item-name">' + item.nombreProducto + '</div><div class="item-details">Cantidad: ' + item.cantidad + ' × ' + moneda + formatearPrecio(item.precioUnitario) + (item.adiciones ? '<br>+ ' + item.adiciones : '') + '</div></div><div class="item-price">' + moneda + formatearPrecio(item.subtotalItem) + '</div></div>';
+    });
+    itemsList.innerHTML = itemsHtml;
+  } else {
+    itemsList.innerHTML = '<div class="item-row"><div class="item-info">Sin items</div></div>';
+  }
+  
+  // Notas
+  const notasContainer = document.getElementById('notasContainer');
+  if (p.notas && p.notas.trim()) {
+    notasContainer.style.display = 'block';
+    document.getElementById('modalNotas').textContent = p.notas;
+  } else {
+    notasContainer.style.display = 'none';
+  }
+  
+  // Totales
+  document.getElementById('modalSubtotal').textContent = moneda + formatearPrecio(p.subtotal);
+  document.getElementById('modalDescuento').textContent = '-' + moneda + formatearPrecio(p.descuento || 0);
+  document.getElementById('modalTotal').textContent = moneda + formatearPrecio(p.total);
+  document.getElementById('modalMetodoPago').textContent = p.metodoPago || 'No especificado';
+  
+  // Renderizar historial de estados si existe
+  renderizarHistorialEstados(p.historial || []);
+  
+  // Renderizar botones de acción según estado y rol
+  renderizarBotonesAccion(p.estadoLogistico, p.estadoCierre);
+}
+
+/**
+ * Renderizar historial de cambios de estado (Timeline)
+ */
+function renderizarHistorialEstados(historial) {
+  const container = document.getElementById('historialEstados');
+  
+  if (!container) {
+    // Si no existe el contenedor, crearlo dinámicamente en la sección de acciones
+    const accionesSection = document.getElementById('accionesEstado');
+    if (accionesSection) {
+      const historialDiv = document.createElement('div');
+      historialDiv.id = 'historialEstados';
+      historialDiv.className = 'historial-estados-container';
+      accionesSection.insertBefore(historialDiv, accionesSection.firstChild);
+    }
+  }
+  
+  const historialContainer = document.getElementById('historialEstados');
+  if (!historialContainer) return;
+  
+  if (!historial || historial.length === 0) {
+    historialContainer.innerHTML = '';
+    historialContainer.style.display = 'none';
+    return;
+  }
+  
+  historialContainer.style.display = 'block';
+  
+  let html = '<h4 style="font-size: 14px; margin-bottom: 12px; color: var(--text-secondary);">📝 Historial de Estados</h4><div class="timeline-container">';
+  
+  historial.forEach(function(item, index) {
+    const fecha = new Date(item.fechaHora);
+    const fechaFormateada = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
+    const horaFormateada = fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    
+    const iconoEstado = obtenerIconoEstado(item.estadoNuevo);
+    const esUltimo = index === historial.length - 1;
+    
+    html += '<div class="timeline-item ' + (esUltimo ? 'timeline-active' : '') + '">';
+    html += '<div class="timeline-marker"><span>' + iconoEstado + '</span></div>';
+    html += '<div class="timeline-content"><div class="timeline-header"><strong>' + item.estadoNuevo + '</strong><span class="timeline-time">' + fechaFormateada + ' ' + horaFormateada + '</span></div><div class="timeline-details"><span>Por: ' + (item.nombreUsuario || 'Sistema') + '</span>' + (item.rol ? '<span class="timeline-role">(' + item.rol + ')</span>' : '') + '</div>' + (item.notas ? '<div class="timeline-notes">' + item.notas + '</div>' : '') + '</div></div>';
+  });
+  
+  html += '</div>';
+  historialContainer.innerHTML = html;
+}
+
+function obtenerIconoEstado(estado) {
+  const iconos = {
+    'Solicitado': '📋',
+    'Recibido': '🍳',
+    'Enviado': '🚚',
+    'Entregado': '✅',
+    'Cancelado': '❌'
+  };
+  return iconos[estado] || '📌';
+}
+
+/**
+ * Renderizar botones de acción según rol y estado
+ */
+function renderizarBotonesAccion(estadoLogistico, estadoCierre) {
+  const container = document.getElementById('botonesAccion');
+  const cancelacionForm = document.getElementById('cancelacionForm');
+  cancelacionForm.style.display = 'none';
+  
+  // Si está cancelado o entregado para roles normales
+  if (estadoCierre === 'Cancelado') {
+    container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);"><p>Este pedido ha sido <strong style="color: var(--danger);">cancelado</strong>.</p>' + (pedidoSeleccionado.motivoCancelacion ? '<p style="margin-top: 10px;"><strong>Motivo:</strong> ' + pedidoSeleccionado.motivoCancelacion + '</p>' : '') + '</div>';
+    return;
+  }
+  
+  // Si es entregado y NO es Super Admin
+  if (estadoLogistico === 'Entregado' && !usuarioDashboard.esSuperAdmin) {
+    container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);"><p>Este pedido ha sido <strong style="color: var(--success);">completado</strong>.</p></div>';
+    return;
+  }
+  
+  let html = '';
+  
+  // SUPER ADMIN: Dropdown con todos los estados
+  if (usuarioDashboard.esSuperAdmin) {
+    html += '<div class="admin-estado-control"><label style="display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;">🔑 Control de Administrador</label><div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;"><select id="selectEstadoAdmin" class="select-estado-admin" onchange="habilitarBotonGuardar()"><option value="">-- Seleccionar Estado --</option>';
+    
+    ESTADOS_DISPONIBLES.forEach(function(estado) {
+      html += '<option value="' + estado + '" ' + (estado === estadoLogistico ? 'selected' : '') + '>' + obtenerIconoEstado(estado) + ' ' + estado + '</option>';
+    });
+    
+    html += '</select><button id="btnGuardarEstado" class="btn-action btn-guardar-estado" onclick="guardarEstadoAdmin()" disabled>💾 Guardar Cambio</button></div><p style="font-size: 11px; color: var(--text-light); margin-top: 8px;">⚠️ Como Administrador, puede cambiar a cualquier estado directamente.</p></div>';
+    
+    // Botón de cancelar siempre visible para Admin
+    html += '<div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed var(--border-color);"><button class="btn-action btn-cancelar" onclick="mostrarFormCancelacion()">❌ Cancelar Pedido</button></div>';
+  } else {
+    // ROLES NORMALES: Botones secuenciales
+    switch (estadoLogistico) {
+      case 'Solicitado':
+        html += '<button class="btn-action btn-aceptar" onclick="cambiarEstado(\'Recibido\')">✅ Aceptar Pedido</button>';
+        break;
+      case 'Recibido':
+        html += '<button class="btn-action btn-enviar" onclick="cambiarEstado(\'Enviado\')">🚚 Marcar como Enviado</button>';
+        break;
+      case 'Enviado':
+        html += '<button class="btn-action btn-entregar" onclick="cambiarEstado(\'Entregado\')">🎉 Marcar como Entregado</button>';
+        break;
+    }
+    
+    // Botón de cancelar para roles normales
+    if (estadoLogistico !== 'Entregado') {
+      html += '<button class="btn-action btn-cancelar" onclick="mostrarFormCancelacion()">❌ Cancelar Pedido</button>';
+    }
+  }
+  
+  container.innerHTML = html;
+}
+
+function habilitarBotonGuardar() {
+  const select = document.getElementById('selectEstadoAdmin');
+  const btn = document.getElementById('btnGuardarEstado');
+  
+  if (select && btn) {
+    const estadoSeleccionado = select.value;
+    const estadoActual = pedidoSeleccionado.estadoLogistico;
+    
+    btn.disabled = !estadoSeleccionado || estadoSeleccionado === estadoActual;
+  }
+}
+
+function guardarEstadoAdmin() {
+  const select = document.getElementById('selectEstadoAdmin');
+  if (!select) return;
+  
+  const nuevoEstado = select.value;
+  if (!nuevoEstado) {
+    mostrarToast('warning', 'Selección requerida', 'Debe seleccionar un estado');
+    return;
+  }
+  
+  const estadoActual = pedidoSeleccionado.estadoLogistico;
+  if (nuevoEstado === estadoActual) {
+    mostrarToast('info', 'Sin cambios', 'El estado seleccionado es el mismo que el actual');
+    return;
+  }
+  
+  // Confirmar cambio
+  const mensaje = '¿Está seguro de cambiar el estado de "' + estadoActual + '" a "' + nuevoEstado + '"?';
+  if (!confirm(mensaje)) {
+    return;
+  }
+  
+  // Llamar a la función de cambio con flag de Super Admin
+  cambiarEstadoConAdmin(nuevoEstado);
+}
+
+function cambiarEstadoConAdmin(nuevoEstado) {
+  if (!pedidoSeleccionado) return;
+  
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      if (result.success) {
+        mostrarToast('success', 'Estado actualizado', result.message);
+        cerrarModalDetalle();
+        cargarDatosDashboard();
+      } else {
+        mostrarToast('error', 'Error', result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al cambiar estado:', error);
+      mostrarToast('error', 'Error', 'No se pudo cambiar el estado');
+    })
+    .cambiarEstadoPedido(
+      pedidoSeleccionado.idPedido, 
+      nuevoEstado, 
+      usuarioDashboard.id, 
+      null, 
+      usuarioDashboard.esSuperAdmin,
+      usuarioDashboard.nombre,
+      usuarioDashboard.rol
+    );
+}
+
+function cambiarEstado(nuevoEstado) {
+  if (!pedidoSeleccionado) return;
+  
+  const mensajesConfirm = {
+    'Recibido': '¿Aceptar este pedido y comenzar preparación?',
+    'Enviado': '¿Marcar este pedido como enviado/en camino?',
+    'Entregado': '¿Confirmar que el pedido fue entregado? Esto cerrará el pedido.'
+  };
+  
+  if (!confirm(mensajesConfirm[nuevoEstado] || '¿Cambiar estado del pedido?')) {
+    return;
+  }
+  
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      if (result.success) {
+        mostrarToast('success', 'Estado actualizado', result.message);
+        cerrarModalDetalle();
+        cargarDatosDashboard();
+      } else {
+        mostrarToast('error', 'Error', result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al cambiar estado:', error);
+      mostrarToast('error', 'Error', 'No se pudo cambiar el estado');
+    })
+    .cambiarEstadoPedido(
+      pedidoSeleccionado.idPedido, 
+      nuevoEstado, 
+      usuarioDashboard.id, 
+      null,
+      false,
+      usuarioDashboard.nombre,
+      usuarioDashboard.rol
+    );
+}
+
+function mostrarFormCancelacion() {
+  document.getElementById('botonesAccion').style.display = 'none';
+  document.getElementById('cancelacionForm').style.display = 'block';
+  document.getElementById('motivoCancelacion').value = '';
+  document.getElementById('motivoCancelacion').focus();
+}
+
+function ocultarFormCancelacion() {
+  document.getElementById('cancelacionForm').style.display = 'none';
+  document.getElementById('botonesAccion').style.display = 'flex';
+}
+
+function confirmarCancelacion() {
+  const motivo = document.getElementById('motivoCancelacion').value.trim();
+  
+  if (!motivo) {
+    mostrarToast('warning', 'Motivo requerido', 'Debe ingresar un motivo de cancelación');
+    document.getElementById('motivoCancelacion').focus();
+    return;
+  }
+  
+  if (!confirm('¿Está seguro que desea cancelar este pedido?')) {
+    return;
+  }
+  
+  mostrarLoading(true);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      if (result.success) {
+        mostrarToast('success', 'Pedido cancelado', 'El pedido ha sido cancelado correctamente');
+        cerrarModalDetalle();
+        cargarDatosDashboard();
+      } else {
+        mostrarToast('error', 'Error', result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al cancelar:', error);
+      mostrarToast('error', 'Error', 'No se pudo cancelar el pedido');
+    })
+    .cambiarEstadoPedido(
+      pedidoSeleccionado.idPedido, 
+      'Cancelado', 
+      usuarioDashboard.id, 
+      motivo,
+      usuarioDashboard.esSuperAdmin,
+      usuarioDashboard.nombre,
+      usuarioDashboard.rol
+    );
+}
+
+function cerrarModalDetalle() {
+  document.getElementById('modalDetalle').classList.remove('show');
+  pedidoSeleccionado = null;
+}
+
+function imprimirComanda() {
+  window.print();
+}
+
+// ============================================
+// EXPORTAR CSV
+// ============================================
+function exportarCSV() {
+  mostrarLoading(true);
+  
+  const filtros = {
+    fecha: filtrosActuales.fecha,
+    etapa: filtrosActuales.etapa,
+    estadoCierre: filtrosActuales.estadoCierre,
+    tipoEntrega: filtrosActuales.tipoEntrega,
+    vistaRol: filtrosActuales.vistaRol
+  };
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      if (result.success) {
+        const blob = new Blob([result.csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = result.filename;
+        link.click();
+        
+        mostrarToast('success', 'Exportado', 'Archivo CSV descargado correctamente');
+      } else {
+        mostrarToast('error', 'Error', result.message);
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al exportar:', error);
+      mostrarToast('error', 'Error', 'No se pudo exportar los datos');
+    })
+    .exportarPedidosCSV(filtros);
+}
+
+// ============================================
+// UTILIDADES
+// ============================================
+function formatearPrecio(precio) {
+  return parseFloat(precio || 0).toLocaleString('es-CO', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  });
+}
+
+function mostrarLoading(mostrar) {
+  const overlay = document.getElementById('loadingOverlay');
+  if (mostrar) {
+    overlay.classList.add('show');
+  } else {
+    overlay.classList.remove('show');
+  }
+}
+
+function mostrarToast(tipo, titulo, mensaje) {
+  const container = document.getElementById('toastContainer');
+  
+  const iconos = {
+    'success': '✅',
+    'error': '❌',
+    'warning': '⚠️',
+    'info': 'ℹ️'
+  };
+  
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-' + tipo;
+  toast.innerHTML = '<span class="toast-icon">' + iconos[tipo] + '</span><div class="toast-content"><div class="toast-title">' + titulo + '</div><div class="toast-message">' + mensaje + '</div></div>';
+  
+  container.appendChild(toast);
+  
+  setTimeout(function() {
+    toast.classList.add('toast-out');
+    setTimeout(function() { toast.remove(); }, 300);
+  }, 4000);
+}
+
+// ============================================
+// EVENTOS GLOBALES
+// ============================================
+document.addEventListener('click', function(e) {
+  if (e.target === document.getElementById('modalDetalle')) {
+    cerrarModalDetalle();
+  }
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    cerrarModalDetalle();
+  }
+});
+
+console.log('✅ JS-Dashboard V18 - Fase 8.3 cargado correctamente');
+
+// ============================================
+// HERRAMIENTAS PARA DOMICILIARIOS
+// V14.1 - Corregido y funcional
+// ============================================
+
+/**
+ * Copiar dirección al portapapeles
+ * Utiliza la API Clipboard con fallback para navegadores antiguos
+ */
+function copiarDireccion() {
+  const direccion = document.getElementById('modalDireccion').textContent;
+  
+  if (!direccion || direccion === '-' || direccion.trim() === '') {
+    mostrarToast('warning', 'Sin dirección', 'Este pedido no tiene dirección de entrega');
+    return;
+  }
+  
+  // Verificar disponibilidad de la API Clipboard
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(direccion)
+      .then(function() {
+        mostrarToast('success', '📋 Copiado', 'Dirección copiada al portapapeles');
+        reproducirSonidoCopiado();
+      })
+      .catch(function(err) {
+        console.error('Error al copiar al portapapeles:', err);
+        fallbackCopiar(direccion);
+      });
+  } else {
+    // Fallback para navegadores sin soporte de Clipboard API
+    fallbackCopiar(direccion);
+  }
+}
+
+/**
+ * Fallback para copiar usando método antiguo
+ * Necesario para navegadores como Safari antiguo o contextos no seguros
+ */
+function fallbackCopiar(texto) {
+  var textarea = document.createElement('textarea');
+  textarea.value = texto;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  
+  try {
+    var exitoso = document.execCommand('copy');
+    if (exitoso) {
+      mostrarToast('success', '📋 Copiado', 'Dirección copiada al portapapeles');
+      reproducirSonidoCopiado();
+    } else {
+      mostrarToast('error', 'Error', 'No se pudo copiar. Copia manualmente.');
+    }
+  } catch (err) {
+    console.error('Fallback copy failed:', err);
+    mostrarToast('error', 'Error', 'No se pudo copiar la dirección');
+  }
+  
+  document.body.removeChild(textarea);
+}
+
+/**
+ * Reproducir sonido de confirmación (opcional)
+ * Proporciona feedback auditivo adicional
+ */
+function reproducirSonidoCopiado() {
+  try {
+    var audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    var oscillator = audioContext.createOscillator();
+    var gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(1200, audioContext.currentTime + 0.1);
+    
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.2);
+  } catch (e) {
+    // Si el audio falla, no hacer nada - el toast es suficiente
+  }
+}
+
+/**
+ * Abrir Google Maps con la dirección de entrega
+ * Utiliza el formato de URL universal de Google Maps
+ */
+function abrirGPS() {
+  var direccion = document.getElementById('modalDireccion').textContent;
+  
+  if (!direccion || direccion === '-' || direccion.trim() === '') {
+    mostrarToast('warning', 'Sin dirección', 'Este pedido no tiene dirección de entrega');
+    return;
+  }
+  
+  // Limpiar la dirección: eliminar caracteres problemáticos
+  var direccionLimpia = direccion.replace(/\r?\n|\r/g, ' ').replace(/\s+/g, ' ').trim();
+  
+  // Codificar la dirección para uso en URL
+  var direccionCodificada = encodeURIComponent(direccionLimpia);
+  
+  // Construir URL de Google Maps
+  var urlMaps = 'https://www.google.com/maps/search/?api=1&query=' + direccionCodificada;
+  
+  // Abrir en nueva pestaña
+  window.open(urlMaps, '_blank');
+  
+  // Feedback visual
+  mostrarToast('info', '📍 Navegando', 'Abriendo Google Maps con la dirección');
+}
+
+// ============================================
+// FASE 9.2: GESTIÓN DE USUARIOS - CRUD ADMIN
+// ============================================
+
+// Variables globales para gestión de usuarios
+var usuariosCache = [];
+var usuarioEditando = null;
+var usuarioAEliminar = null;
+
+/**
+ * Inicializar módulo de usuarios cuando el usuario es Admin
+ */
+function inicializarModuloUsuarios() {
+  // Verificar si el usuario es Administrador
+  if (usuarioDashboard && usuarioDashboard.esSuperAdmin) {
+    var btnNavUsuarios = document.getElementById('btnNavUsuarios');
+    if (btnNavUsuarios) {
+      btnNavUsuarios.style.display = 'flex';
+    }
+    console.log('✅ Módulo de usuarios habilitado para Admin');
+  }
+}
+
+/**
+ * Cargar lista de usuarios desde el backend
+ */
+function cargarListaUsuarios() {
+  console.log('🔄 Cargando lista de usuarios...');
+
+  var tbodyUsuarios = document.getElementById('tbodyUsuarios');
+  var listaUsuariosMobile = document.getElementById('listaUsuariosMobile');
+  var emptyStateUsuarios = document.getElementById('emptyStateUsuarios');
+
+  // Mostrar loading
+  if (tbodyUsuarios) {
+    tbodyUsuarios.innerHTML = '<tr class="loading-row"><td colspan="5"><div class="table-loading"><div class="spinner"></div><span>Cargando usuarios...</span></div></td></tr>';
+  }
+  if (listaUsuariosMobile) {
+    listaUsuariosMobile.innerHTML = '<div class="table-loading"><div class="spinner"></div><span>Cargando usuarios...</span></div>';
+  }
+  if (emptyStateUsuarios) {
+    emptyStateUsuarios.style.display = 'none';
+  }
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      console.log('📥 Respuesta usuarios:', response);
+
+      if (response.success) {
+        usuariosCache = response.data || [];
+        renderizarTablaUsuarios();
+        actualizarBadgeUsuarios();
+        mostrarToast('success', 'Usuarios cargados', 'Se encontraron ' + usuariosCache.length + ' usuarios');
+      } else {
+        mostrarToast('error', 'Error', response.error || 'No se pudieron cargar los usuarios');
+        if (tbodyUsuarios) {
+          tbodyUsuarios.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Error al cargar usuarios</td></tr>';
+        }
+      }
+    })
+    .withFailureHandler(function(error) {
+      console.error('❌ Error al cargar usuarios:', error);
+      mostrarToast('error', 'Error de conexión', 'No se pudo conectar con el servidor');
+      if (tbodyUsuarios) {
+        tbodyUsuarios.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">Error de conexión</td></tr>';
+      }
+    })
+    .adminGestionarUsuarios('leer', {}, usuarioDashboard);
+}
+
+/**
+ * Renderizar tabla de usuarios (Desktop y Mobile)
+ */
+function renderizarTablaUsuarios() {
+  var tbodyUsuarios = document.getElementById('tbodyUsuarios');
+  var listaUsuariosMobile = document.getElementById('listaUsuariosMobile');
+  var emptyStateUsuarios = document.getElementById('emptyStateUsuarios');
+
+  // Aplicar filtro de búsqueda si existe
+  var busqueda = document.getElementById('busquedaUsuarios');
+  var termino = busqueda ? busqueda.value.toLowerCase().trim() : '';
+
+  var usuariosFiltrados = usuariosCache.filter(function(u) {
+    if (!termino) return true;
+    var nombre = (u.nombre || '').toLowerCase();
+    var email = (u.email || '').toLowerCase();
+    var telefono = (u.telefono || '').toLowerCase();
+    return nombre.indexOf(termino) !== -1 || email.indexOf(termino) !== -1 || telefono.indexOf(termino) !== -1;
+  });
+
+  if (usuariosFiltrados.length === 0) {
+    if (tbodyUsuarios) tbodyUsuarios.innerHTML = '';
+    if (listaUsuariosMobile) listaUsuariosMobile.innerHTML = '';
+    if (emptyStateUsuarios) emptyStateUsuarios.style.display = 'block';
+    return;
+  }
+
+  if (emptyStateUsuarios) emptyStateUsuarios.style.display = 'none';
+
+  // Renderizar tabla desktop
+  var htmlDesktop = '';
+  usuariosFiltrados.forEach(function(usuario) {
+    var avatarClass = obtenerClaseAvatar(usuario.rol);
+    var inicial = usuario.nombre ? usuario.nombre.charAt(0).toUpperCase() : 'U';
+    var badgeRol = obtenerBadgeRol(usuario.rol);
+    var badgeEstado = usuario.activo
+      ? '<span class="badge-estado badge-activo">✅ Activo</span>'
+      : '<span class="badge-estado badge-inactivo">❌ Inactivo</span>';
+
+    var acciones = '';
+    if (usuario.activo) {
+      acciones = '<button class="btn-accion-usuario btn-editar-usuario" onclick="abrirModalUsuario(\'' + usuario.id + '\')">✏️ Editar</button>';
+      // No permitir eliminar su propia cuenta
+      if (usuario.id !== usuarioDashboard.id) {
+        acciones += '<button class="btn-accion-usuario btn-eliminar-usuario" onclick="abrirModalEliminar(\'' + usuario.id + '\', \'' + escapeHtml(usuario.nombre) + '\')">🗑️</button>';
+      }
+    } else {
+      acciones = '<button class="btn-accion-usuario btn-reactivar-usuario" onclick="reactivarUsuario(\'' + usuario.id + '\')">🔄 Reactivar</button>';
+    }
+
+    htmlDesktop += '<tr>';
+    htmlDesktop += '<td><div class="usuario-info"><div class="usuario-avatar ' + avatarClass + '">' + inicial + '</div><div><div class="usuario-nombre">' + escapeHtml(usuario.nombre) + '</div><div class="usuario-id">' + usuario.id + '</div></div></div></td>';
+    htmlDesktop += '<td>' + badgeRol + '</td>';
+    htmlDesktop += '<td><div class="contacto-info"><span class="contacto-email">' + (usuario.email || '-') + '</span><span class="contacto-telefono">📱 ' + (usuario.telefono || '-') + '</span></div></td>';
+    htmlDesktop += '<td>' + badgeEstado + '</td>';
+    htmlDesktop += '<td><div class="acciones-usuario">' + acciones + '</div></td>';
+    htmlDesktop += '</tr>';
+  });
+
+  if (tbodyUsuarios) tbodyUsuarios.innerHTML = htmlDesktop;
+
+  // Renderizar cards mobile
+  var htmlMobile = '';
+  usuariosFiltrados.forEach(function(usuario) {
+    var avatarClass = obtenerClaseAvatar(usuario.rol);
+    var inicial = usuario.nombre ? usuario.nombre.charAt(0).toUpperCase() : 'U';
+    var badgeRol = obtenerBadgeRol(usuario.rol);
+    var badgeEstado = usuario.activo
+      ? '<span class="badge-estado badge-activo">✅ Activo</span>'
+      : '<span class="badge-estado badge-inactivo">❌ Inactivo</span>';
+
+    var acciones = '';
+    if (usuario.activo) {
+      acciones = '<button class="btn-accion-usuario btn-editar-usuario" onclick="abrirModalUsuario(\'' + usuario.id + '\')">✏️ Editar</button>';
+      if (usuario.id !== usuarioDashboard.id) {
+        acciones += '<button class="btn-accion-usuario btn-eliminar-usuario" onclick="abrirModalEliminar(\'' + usuario.id + '\', \'' + escapeHtml(usuario.nombre) + '\')">🗑️ Desactivar</button>';
+      }
+    } else {
+      acciones = '<button class="btn-accion-usuario btn-reactivar-usuario" onclick="reactivarUsuario(\'' + usuario.id + '\')">🔄 Reactivar</button>';
+    }
+
+    htmlMobile += '<div class="card-usuario-mobile">';
+    htmlMobile += '<div class="card-usuario-header"><div class="card-usuario-info"><div class="usuario-avatar ' + avatarClass + '">' + inicial + '</div><div><div class="card-usuario-nombre">' + escapeHtml(usuario.nombre) + '</div><div class="card-usuario-meta">' + badgeRol + ' ' + badgeEstado + '</div></div></div></div>';
+    htmlMobile += '<div class="card-usuario-contacto">';
+    if (usuario.email) htmlMobile += '<div class="card-usuario-contacto-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>' + usuario.email + '</div>';
+    if (usuario.telefono) htmlMobile += '<div class="card-usuario-contacto-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>' + usuario.telefono + '</div>';
+    htmlMobile += '</div>';
+    htmlMobile += '<div class="card-usuario-actions">' + acciones + '</div>';
+    htmlMobile += '</div>';
+  });
+
+  if (listaUsuariosMobile) listaUsuariosMobile.innerHTML = htmlMobile;
+}
+
+/**
+ * Filtrar usuarios localmente (sin llamar al backend)
+ */
+function filtrarUsuariosLocal() {
+  renderizarTablaUsuarios();
+}
+
+/**
+ * Obtener clase CSS del avatar según el rol
+ */
+function obtenerClaseAvatar(rol) {
+  var clases = {
+    'Administrador': 'avatar-admin',
+    'Admin': 'avatar-admin',
+    'Mesero': 'avatar-mesero',
+    'Cocina': 'avatar-cocina',
+    'Domiciliario': 'avatar-domiciliario'
+  };
+  return clases[rol] || 'avatar-admin';
+}
+
+/**
+ * Obtener badge HTML del rol
+ */
+function obtenerBadgeRol(rol) {
+  var badges = {
+    'Administrador': '<span class="badge-rol badge-rol-admin">👑 Administrador</span>',
+    'Admin': '<span class="badge-rol badge-rol-admin">👑 Admin</span>',
+    'Mesero': '<span class="badge-rol badge-rol-mesero">🧑‍🍳 Mesero</span>',
+    'Cocina': '<span class="badge-rol badge-rol-cocina">🍳 Cocina</span>',
+    'Domiciliario': '<span class="badge-rol badge-rol-domiciliario">🛵 Domiciliario</span>'
+  };
+  return badges[rol] || '<span class="badge-rol">' + rol + '</span>';
+}
+
+/**
+ * Actualizar badge de usuarios en el menú
+ */
+function actualizarBadgeUsuarios() {
+  var badge = document.getElementById('badgeUsuarios');
+  if (badge) {
+    var activos = usuariosCache.filter(function(u) { return u.activo; }).length;
+    badge.textContent = activos;
+  }
+}
+
+/**
+ * Abrir modal para crear o editar usuario
+ */
+function abrirModalUsuario(idUsuario) {
+  var modal = document.getElementById('modalUsuario');
+  var titulo = document.getElementById('modalUsuarioTitulo');
+  var btnTexto = document.getElementById('btnGuardarUsuarioText');
+  var errorDiv = document.getElementById('errorFormUsuario');
+
+  // Limpiar formulario
+  document.getElementById('formUsuario').reset();
+  document.getElementById('checkActivoUsuario').checked = true;
+  if (errorDiv) errorDiv.style.display = 'none';
+
+  // Resetear campos
+  actualizarCamposSegunRol();
+
+  if (idUsuario) {
+    // Modo edición
+    usuarioEditando = usuariosCache.find(function(u) { return u.id === idUsuario; });
+
+    if (!usuarioEditando) {
+      mostrarToast('error', 'Error', 'Usuario no encontrado');
+      return;
+    }
+
+    titulo.textContent = '✏️ Editar Usuario';
+    btnTexto.textContent = 'Actualizar Usuario';
+
+    // Llenar formulario
+    document.getElementById('inputNombreUsuario').value = usuarioEditando.nombre || '';
+    document.getElementById('selectRolUsuario').value = usuarioEditando.rol || '';
+    document.getElementById('inputEmailUsuario').value = usuarioEditando.email || '';
+    document.getElementById('inputTelefonoUsuario').value = usuarioEditando.telefono || '';
+    document.getElementById('checkActivoUsuario').checked = usuarioEditando.activo;
+    document.getElementById('inputCredencialUsuario').value = ''; // No mostrar credencial actual
+    document.getElementById('reqCredencial').style.display = 'none'; // No requerido en edición
+
+    // Actualizar campos según rol
+    actualizarCamposSegunRol();
+
+  } else {
+    // Modo creación
+    usuarioEditando = null;
+    titulo.textContent = '➕ Nuevo Usuario';
+    btnTexto.textContent = 'Guardar Usuario';
+    document.getElementById('reqCredencial').style.display = 'inline';
+  }
+
+  modal.classList.add('show');
+}
+
+/**
+ * Cerrar modal de usuario
+ */
+function cerrarModalUsuario() {
+  var modal = document.getElementById('modalUsuario');
+  modal.classList.remove('show');
+  usuarioEditando = null;
+}
+
+/**
+ * Actualizar campos del formulario según el rol seleccionado
+ */
+function actualizarCamposSegunRol() {
+  var rol = document.getElementById('selectRolUsuario').value;
+  var campoEmail = document.getElementById('campoEmailUsuario');
+  var labelCredencial = document.getElementById('labelCredencialUsuario');
+  var inputCredencial = document.getElementById('inputCredencialUsuario');
+  var hintCredencial = document.getElementById('hintCredencial');
+  var hintRol = document.getElementById('hintRol');
+
+  if (rol === 'Mesero') {
+    // Ocultar email para meseros
+    campoEmail.style.display = 'none';
+
+    // Cambiar a PIN
+    labelCredencial.innerHTML = '🔢 PIN de Acceso <span class="required" id="reqCredencial">*</span>';
+    inputCredencial.type = 'text';
+    inputCredencial.maxLength = 4;
+    inputCredencial.placeholder = '0000';
+    inputCredencial.pattern = '[0-9]{4}';
+    hintCredencial.textContent = 'PIN de 4 dígitos numéricos para acceso rápido';
+    hintRol.textContent = 'Los meseros acceden con PIN desde el Panel de Meseros';
+
+  } else {
+    // Mostrar email para otros roles
+    campoEmail.style.display = 'block';
+
+    // Cambiar a Password
+    labelCredencial.innerHTML = '🔐 Contraseña <span class="required" id="reqCredencial">*</span>';
+    inputCredencial.type = 'password';
+    inputCredencial.maxLength = 50;
+    inputCredencial.placeholder = '••••••••';
+    inputCredencial.pattern = '';
+    hintCredencial.textContent = 'Mínimo 4 caracteres';
+
+    if (rol === 'Administrador') {
+      hintRol.textContent = 'Acceso completo al sistema, puede gestionar usuarios y pedidos';
+    } else if (rol === 'Cocina') {
+      hintRol.textContent = 'Acceso al Dashboard para ver y gestionar pedidos en preparación';
+    } else if (rol === 'Domiciliario') {
+      hintRol.textContent = 'Acceso al Dashboard para ver pedidos en camino';
+    } else {
+      hintRol.textContent = 'El rol determina los permisos y método de acceso';
+    }
+  }
+
+  // Mostrar/ocultar requerido según modo
+  var reqCredencial = document.getElementById('reqCredencial');
+  if (reqCredencial && usuarioEditando) {
+    reqCredencial.style.display = 'none';
+  }
+}
+
+/**
+ * Toggle visibilidad de password
+ */
+function togglePasswordVisibility() {
+  var input = document.getElementById('inputCredencialUsuario');
+  var iconShow = document.getElementById('iconShowPass');
+  var iconHide = document.getElementById('iconHidePass');
+
+  if (input.type === 'password') {
+    input.type = 'text';
+    iconShow.style.display = 'none';
+    iconHide.style.display = 'block';
+  } else {
+    input.type = 'password';
+    iconShow.style.display = 'block';
+    iconHide.style.display = 'none';
+  }
+}
+
+/**
+ * Guardar usuario (crear o actualizar)
+ */
+function guardarUsuario() {
+  var errorDiv = document.getElementById('errorFormUsuario');
+  errorDiv.style.display = 'none';
+
+  // Obtener valores
+  var nombre = document.getElementById('inputNombreUsuario').value.trim();
+  var rol = document.getElementById('selectRolUsuario').value;
+  var email = document.getElementById('inputEmailUsuario').value.trim();
+  var credencial = document.getElementById('inputCredencialUsuario').value;
+  var telefono = document.getElementById('inputTelefonoUsuario').value.trim();
+  var activo = document.getElementById('checkActivoUsuario').checked;
+
+  // Validaciones
+  var errores = [];
+
+  if (!nombre || nombre.length < 2) {
+    errores.push('El nombre es obligatorio (mínimo 2 caracteres)');
+  }
+
+  if (!rol) {
+    errores.push('Debe seleccionar un rol');
+  }
+
+  if (rol === 'Mesero') {
+    // Validar PIN
+    if (!usuarioEditando && !credencial) {
+      errores.push('El PIN es obligatorio');
+    }
+    if (credencial && !/^\d{4}$/.test(credencial)) {
+      errores.push('El PIN debe ser de 4 dígitos numéricos');
+    }
+  } else {
+    // Validar email
+    if (!email) {
+      errores.push('El email es obligatorio');
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errores.push('El email no tiene un formato válido');
+    }
+
+    // Validar password
+    if (!usuarioEditando && !credencial) {
+      errores.push('La contraseña es obligatoria');
+    }
+    if (credencial && credencial.length < 4) {
+      errores.push('La contraseña debe tener mínimo 4 caracteres');
+    }
+  }
+
+  // Validar teléfono si se proporciona
+  if (telefono && telefono.length < 7) {
+    errores.push('El teléfono debe tener mínimo 7 dígitos');
+  }
+
+  if (errores.length > 0) {
+    errorDiv.innerHTML = errores.join('<br>');
+    errorDiv.style.display = 'block';
+    return;
+  }
+
+  // Preparar datos
+  var datos = {
+    nombre: nombre,
+    email: email,
+    telefono: telefono,
+    rol: rol,
+    credencial: credencial,
+    activo: activo,
+    idActual: usuarioEditando ? usuarioEditando.id : null
+  };
+
+  console.log('💾 Guardando usuario:', datos);
+  mostrarLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      mostrarLoading(false);
+      console.log('📥 Respuesta guardar:', response);
+
+      if (response.success) {
+        mostrarToast('success', 'Éxito', response.message);
+        cerrarModalUsuario();
+        cargarListaUsuarios();
+      } else {
+        errorDiv.innerHTML = response.error || 'Error al guardar el usuario';
+        errorDiv.style.display = 'block';
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al guardar:', error);
+      errorDiv.innerHTML = 'Error de conexión: ' + error;
+      errorDiv.style.display = 'block';
+    })
+    .adminGestionarUsuarios('guardar', datos, usuarioDashboard);
+}
+
+/**
+ * Abrir modal de confirmación para eliminar
+ */
+function abrirModalEliminar(idUsuario, nombreUsuario) {
+  var modal = document.getElementById('modalConfirmarEliminar');
+  var nombreSpan = document.getElementById('nombreUsuarioEliminar');
+
+  usuarioAEliminar = idUsuario;
+  nombreSpan.textContent = nombreUsuario;
+
+  modal.classList.add('show');
+}
+
+/**
+ * Cerrar modal de confirmación
+ */
+function cerrarModalConfirmarEliminar() {
+  var modal = document.getElementById('modalConfirmarEliminar');
+  modal.classList.remove('show');
+  usuarioAEliminar = null;
+}
+
+/**
+ * Confirmar eliminación (soft delete)
+ */
+function confirmarEliminarUsuario() {
+  if (!usuarioAEliminar) return;
+
+  console.log('🗑️ Desactivando usuario:', usuarioAEliminar);
+  mostrarLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      mostrarLoading(false);
+      cerrarModalConfirmarEliminar();
+
+      if (response.success) {
+        mostrarToast('success', 'Usuario desactivado', response.message);
+        cargarListaUsuarios();
+      } else {
+        mostrarToast('error', 'Error', response.error || 'No se pudo desactivar el usuario');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      cerrarModalConfirmarEliminar();
+      console.error('❌ Error al eliminar:', error);
+      mostrarToast('error', 'Error de conexión', error.toString());
+    })
+    .adminGestionarUsuarios('eliminar', { id: usuarioAEliminar }, usuarioDashboard);
+}
+
+/**
+ * Reactivar usuario desactivado
+ */
+function reactivarUsuario(idUsuario) {
+  if (!confirm('¿Desea reactivar este usuario?')) return;
+
+  console.log('🔄 Reactivando usuario:', idUsuario);
+  mostrarLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      mostrarLoading(false);
+
+      if (response.success) {
+        mostrarToast('success', 'Usuario reactivado', response.message);
+        cargarListaUsuarios();
+      } else {
+        mostrarToast('error', 'Error', response.error || 'No se pudo reactivar el usuario');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('❌ Error al reactivar:', error);
+      mostrarToast('error', 'Error de conexión', error.toString());
+    })
+    .adminReactivarEntidad('usuario', idUsuario, usuarioDashboard);
+}
+
+/**
+ * Escapar HTML para prevenir XSS
+ */
+function escapeHtml(text) {
+  if (!text) return '';
+  var div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
+ * Modificar función cambiarVista para soportar vista de usuarios
+ */
+var cambiarVistaOriginal = cambiarVista;
+cambiarVista = function(vista, elemento) {
+  vistaActual = vista;
+
+  document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
+  if (elemento) elemento.classList.add('active');
+
+  // Ocultar todas las secciones
+  var statsGrid = document.querySelector('.stats-grid');
+  var filtersBar = document.querySelector('.filters-bar');
+  var tableContainer = document.querySelector('.table-container');
+  var seccionUsuarios = document.getElementById('seccionUsuarios');
+
+  if (vista === 'usuarios') {
+    // Mostrar sección de usuarios
+    if (statsGrid) statsGrid.style.display = 'none';
+    if (filtersBar) filtersBar.style.display = 'none';
+    if (tableContainer) tableContainer.style.display = 'none';
+    if (seccionUsuarios) seccionUsuarios.style.display = 'block';
+
+    document.getElementById('vistaTitle').textContent = '👥 Gestión de Usuarios';
+    document.getElementById('vistaSubtitle').textContent = 'Administrar usuarios del sistema';
+
+    // Cargar usuarios si no están cargados
+    if (usuariosCache.length === 0) {
+      cargarListaUsuarios();
+    }
+  } else {
+    // Mostrar vista de pedidos
+    if (statsGrid) statsGrid.style.display = 'grid';
+    if (filtersBar) filtersBar.style.display = 'flex';
+    if (tableContainer) tableContainer.style.display = 'block';
+    if (seccionUsuarios) seccionUsuarios.style.display = 'none';
+
+    var titulos = {
+      'admin': { titulo: '📊 Dashboard Pedidos', subtitulo: 'Vista completa de todos los pedidos' },
+      'cocina': { titulo: '👨‍🍳 Pedidos Comanda', subtitulo: 'Pedidos pendientes y en preparación' },
+      'domicilio': { titulo: '🛵 Pedidos Domicilio', subtitulo: 'Pedidos listos para entregar' }
+    };
+
+    if (titulos[vista]) {
+      document.getElementById('vistaTitle').textContent = titulos[vista].titulo;
+      document.getElementById('vistaSubtitle').textContent = titulos[vista].subtitulo;
+    }
+
+    filtrosActuales.vistaRol = vista === 'admin' ? null : vista;
+    cargarDatosDashboard();
+  }
+};
+
+// Agregar inicialización de módulo de usuarios al cargar el dashboard
+var iniciarDashboardOriginal = iniciarDashboard;
+iniciarDashboard = function() {
+  iniciarDashboardOriginal();
+
+  // Inicializar módulo de usuarios después de cargar el dashboard
+  setTimeout(function() {
+    inicializarModuloUsuarios();
+  }, 100);
+};
+
+console.log('✅ FASE 9.2 - Módulo Gestión de Usuarios cargado correctamente');
+
+// ============================================================
+// FASE 9.3: GESTIÓN DE CLIENTES - CRUD ADMIN
+// ============================================================
+
+// Variables globales para gestión de clientes
+var clientesGlobal = [];
+var clienteEditando = null;
+
+/**
+ * Inicializar módulo de clientes cuando el usuario es Admin
+ */
+function inicializarModuloClientes() {
+  try {
+    // Verificar si el usuario es Administrador
+    if (usuarioDashboard && usuarioDashboard.esSuperAdmin) {
+      var btnNavClientes = document.getElementById('btnNavClientes');
+      if (btnNavClientes) {
+        btnNavClientes.style.display = 'flex';
+      }
+      console.log('[CLIENTES] ✅ Módulo de clientes habilitado para Admin');
+    }
+  } catch(error) {
+    console.error('[CLIENTES] Error al inicializar módulo:', error);
+  }
+}
+
+/**
+ * Cargar vista de clientes
+ */
+function cargarVistaClientes() {
+  try {
+    console.log('[CLIENTES] Cargando vista de clientes');
+    cargarListaClientes();
+  } catch(error) {
+    console.error('[CLIENTES] Error al cargar vista:', error);
+    mostrarToast('error', 'Error', 'Error al cargar vista de clientes');
+  }
+}
+
+/**
+ * Cargar lista de clientes desde el backend
+ */
+function cargarListaClientes() {
+  try {
+    console.log('[CLIENTES] 🔄 Solicitando lista de clientes al backend');
+
+    var tbodyClientes = document.getElementById('tbodyClientes');
+    var listaClientesMobile = document.getElementById('listaClientesMobile');
+    var emptyStateClientes = document.getElementById('emptyStateClientes');
+
+    // Mostrar loading
+    if (tbodyClientes) {
+      tbodyClientes.innerHTML = '<tr class="loading-row"><td colspan="5"><div class="table-loading"><div class="spinner"></div><span>⏳ Cargando clientes...</span></div></td></tr>';
+    }
+    if (listaClientesMobile) {
+      listaClientesMobile.innerHTML = '<div class="table-loading"><div class="spinner"></div><span>⏳ Cargando clientes...</span></div>';
+    }
+    if (emptyStateClientes) {
+      emptyStateClientes.style.display = 'none';
+    }
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        console.log('[CLIENTES] 📥 Respuesta recibida:', response);
+
+        if (response.success) {
+          clientesGlobal = response.data || [];
+          renderizarTablaClientes(clientesGlobal);
+          actualizarBadgeClientes();
+          console.log('[CLIENTES] ✅ Cargados ' + clientesGlobal.length + ' clientes');
+        } else {
+          console.error('[CLIENTES] ❌ Error en respuesta:', response.error);
+          if (tbodyClientes) {
+            tbodyClientes.innerHTML = '<tr><td colspan="5" class="texto-error" style="text-align: center; color: var(--danger);">❌ Error: ' + (response.error || 'No se pudieron cargar los clientes') + '</td></tr>';
+          }
+        }
+      })
+      .withFailureHandler(function(error) {
+        console.error('[CLIENTES] ❌ Error de conexión:', error);
+        if (tbodyClientes) {
+          tbodyClientes.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger);">❌ Error de conexión</td></tr>';
+        }
+        mostrarToast('error', 'Error de conexión', 'No se pudo conectar con el servidor');
+      })
+      .adminGestionarClientes('leer', null, usuarioDashboard);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al cargar lista:', error);
+  }
+}
+
+/**
+ * Renderizar tabla de clientes (Desktop y Mobile)
+ */
+function renderizarTablaClientes(clientes) {
+  try {
+    var tbodyClientes = document.getElementById('tbodyClientes');
+    var listaClientesMobile = document.getElementById('listaClientesMobile');
+    var emptyStateClientes = document.getElementById('emptyStateClientes');
+
+    if (!clientes || clientes.length === 0) {
+      if (tbodyClientes) tbodyClientes.innerHTML = '';
+      if (listaClientesMobile) listaClientesMobile.innerHTML = '';
+      if (emptyStateClientes) emptyStateClientes.style.display = 'block';
+      return;
+    }
+
+    if (emptyStateClientes) emptyStateClientes.style.display = 'none';
+
+    // Renderizar tabla desktop
+    var htmlDesktop = '';
+    clientes.forEach(function(cliente) {
+      var clienteJson = JSON.stringify(cliente).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+      htmlDesktop += '<tr>';
+      htmlDesktop += '<td><div class="cliente-nombre-celda"><strong>' + escapeHtml(cliente.nombre || '-') + '</strong></div></td>';
+      htmlDesktop += '<td><span class="cliente-telefono">📱 ' + escapeHtml(cliente.celular || '-') + '</span></td>';
+      htmlDesktop += '<td><div class="cliente-direccion" title="' + escapeHtml(cliente.domicilio || '') + '">' + escapeHtml(truncarTexto(cliente.domicilio, 30) || '-') + '</div></td>';
+      htmlDesktop += '<td>' + escapeHtml(cliente.email || '-') + '</td>';
+      htmlDesktop += '<td><div class="acciones-cliente"><button class="btn-accion-cliente btn-editar-cliente" onclick="abrirModalEditarCliente(' + clienteJson + ')">✏️ Editar</button></div></td>';
+      htmlDesktop += '</tr>';
+    });
+
+    if (tbodyClientes) tbodyClientes.innerHTML = htmlDesktop;
+
+    // Renderizar cards mobile
+    var htmlMobile = '';
+    clientes.forEach(function(cliente) {
+      var clienteJson = JSON.stringify(cliente).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+      htmlMobile += '<div class="card-cliente-mobile">';
+      htmlMobile += '<div class="card-cliente-header"><div class="card-cliente-info"><div class="cliente-avatar-mobile">👤</div><div><div class="card-cliente-nombre">' + escapeHtml(cliente.nombre || 'Sin nombre') + '</div><div class="card-cliente-telefono">📱 ' + escapeHtml(cliente.celular || '-') + '</div></div></div></div>';
+      htmlMobile += '<div class="card-cliente-contacto">';
+      if (cliente.domicilio) htmlMobile += '<div class="card-cliente-contacto-item">🏠 ' + escapeHtml(cliente.domicilio) + '</div>';
+      if (cliente.email) htmlMobile += '<div class="card-cliente-contacto-item">✉️ ' + escapeHtml(cliente.email) + '</div>';
+      htmlMobile += '</div>';
+      htmlMobile += '<div class="card-cliente-actions"><button class="btn-accion-cliente btn-editar-cliente" onclick="abrirModalEditarCliente(' + clienteJson + ')">✏️ Editar</button></div>';
+      htmlMobile += '</div>';
+    });
+
+    if (listaClientesMobile) listaClientesMobile.innerHTML = htmlMobile;
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al renderizar tabla:', error);
+  }
+}
+
+/**
+ * Filtrar clientes en tiempo real
+ */
+function filtrarClientes() {
+  try {
+    var busqueda = document.getElementById('buscadorClientes').value.toLowerCase().trim();
+
+    if (!busqueda) {
+      renderizarTablaClientes(clientesGlobal);
+      return;
+    }
+
+    var clientesFiltrados = clientesGlobal.filter(function(cliente) {
+      var nombre = (cliente.nombre || '').toLowerCase();
+      var telefono = (cliente.celular || '').toLowerCase();
+      var direccion = (cliente.domicilio || '').toLowerCase();
+
+      return nombre.indexOf(busqueda) !== -1 ||
+             telefono.indexOf(busqueda) !== -1 ||
+             direccion.indexOf(busqueda) !== -1;
+    });
+
+    renderizarTablaClientes(clientesFiltrados);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al filtrar:', error);
+  }
+}
+
+/**
+ * Actualizar badge de clientes en el menú
+ */
+function actualizarBadgeClientes() {
+  try {
+    var badge = document.getElementById('badgeClientes');
+    if (badge) {
+      badge.textContent = clientesGlobal.length;
+    }
+  } catch(error) {
+    console.error('[CLIENTES] Error al actualizar badge:', error);
+  }
+}
+
+/**
+ * Abrir modal para editar cliente
+ */
+function abrirModalEditarCliente(cliente) {
+  try {
+    console.log('[CLIENTES] Abriendo modal para editar:', cliente);
+
+    clienteEditando = cliente;
+
+    // Llenar campos del modal
+    document.getElementById('clienteIdHidden').value = cliente.id || '';
+    document.getElementById('inputClienteNombre').value = cliente.nombre || '';
+    document.getElementById('inputClienteTelefono').value = cliente.celular || '';
+    document.getElementById('inputClienteDireccion').value = cliente.domicilio || '';
+    document.getElementById('inputClienteEmail').value = cliente.email || '';
+    document.getElementById('inputClienteNotas').value = cliente.notas || '';
+
+    // Ocultar mensaje de error
+    var errorDiv = document.getElementById('errorFormCliente');
+    if (errorDiv) errorDiv.style.display = 'none';
+
+    // Mostrar modal
+    document.getElementById('modalEditarCliente').classList.add('show');
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al abrir modal:', error);
+    mostrarToast('error', 'Error', 'Error al abrir modal de edición');
+  }
+}
+
+/**
+ * Cerrar modal de cliente
+ */
+function cerrarModalCliente() {
+  try {
+    document.getElementById('modalEditarCliente').classList.remove('show');
+    clienteEditando = null;
+  } catch(error) {
+    console.error('[CLIENTES] Error al cerrar modal:', error);
+  }
+}
+
+/**
+ * Guardar cambios del cliente
+ */
+function guardarCliente() {
+  try {
+    var errorDiv = document.getElementById('errorFormCliente');
+    if (errorDiv) errorDiv.style.display = 'none';
+
+    // Obtener valores
+    var nombre = document.getElementById('inputClienteNombre').value.trim();
+    var telefono = document.getElementById('inputClienteTelefono').value.trim();
+    var direccion = document.getElementById('inputClienteDireccion').value.trim();
+    var email = document.getElementById('inputClienteEmail').value.trim();
+    var notas = document.getElementById('inputClienteNotas').value.trim();
+
+    // Validaciones
+    var errores = [];
+
+    if (!nombre) {
+      errores.push('El nombre es obligatorio');
+    }
+
+    if (!telefono || telefono.length !== 10 || !/^\d+$/.test(telefono)) {
+      errores.push('El teléfono debe tener exactamente 10 dígitos');
+    }
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errores.push('El email no tiene un formato válido');
+    }
+
+    if (errores.length > 0) {
+      if (errorDiv) {
+        errorDiv.innerHTML = '⚠️ ' + errores.join('<br>⚠️ ');
+        errorDiv.style.display = 'block';
+      }
+      mostrarToast('warning', 'Validación', errores[0]);
+      return;
+    }
+
+    // Preparar datos
+    var datosCliente = {
+      idActual: clienteEditando.id,
+      nombre: nombre,
+      celular: telefono,
+      domicilio: direccion,
+      email: email,
+      notas: notas
+    };
+
+    console.log('[CLIENTES] 💾 Guardando cliente:', datosCliente);
+    mostrarLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        mostrarLoading(false);
+
+        if (response.success) {
+          mostrarToast('success', '✅ Cliente actualizado', response.message || 'Los datos se guardaron correctamente');
+          cerrarModalCliente();
+          cargarListaClientes(); // Recargar tabla
+        } else {
+          if (errorDiv) {
+            errorDiv.innerHTML = '❌ ' + (response.error || 'Error al guardar');
+            errorDiv.style.display = 'block';
+          }
+          mostrarToast('error', 'Error', response.error || 'No se pudo guardar el cliente');
+        }
+      })
+      .withFailureHandler(function(error) {
+        mostrarLoading(false);
+        console.error('[CLIENTES] ❌ Error de conexión:', error);
+        mostrarToast('error', 'Error de conexión', 'No se pudo guardar el cliente');
+      })
+      .adminGestionarClientes('guardar', datosCliente, usuarioDashboard);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al guardar:', error);
+    mostrarToast('error', 'Error', 'Error al guardar cliente');
+  }
+}
+
+/**
+ * Confirmar eliminación de cliente
+ */
+function confirmarEliminarCliente() {
+  try {
+    if (!clienteEditando) {
+      mostrarToast('warning', 'Advertencia', 'No hay cliente seleccionado');
+      return;
+    }
+
+    var confirmar = confirm(
+      '⚠️ ¿Estás seguro de eliminar a ' + clienteEditando.nombre + '?\n\n' +
+      'Esta acción marcará al cliente como inactivo.'
+    );
+
+    if (!confirmar) return;
+
+    console.log('[CLIENTES] 🗑️ Eliminando cliente:', clienteEditando.id);
+    mostrarLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        mostrarLoading(false);
+
+        if (response.success) {
+          mostrarToast('success', '✅ Cliente eliminado', response.message || 'El cliente fue eliminado correctamente');
+          cerrarModalCliente();
+          cargarListaClientes();
+        } else {
+          mostrarToast('error', 'Error', response.error || 'No se pudo eliminar el cliente');
+        }
+      })
+      .withFailureHandler(function(error) {
+        mostrarLoading(false);
+        console.error('[CLIENTES] ❌ Error al eliminar:', error);
+        mostrarToast('error', 'Error de conexión', 'No se pudo eliminar el cliente');
+      })
+      .adminGestionarClientes('eliminar', { idActual: clienteEditando.id }, usuarioDashboard);
+
+  } catch(error) {
+    console.error('[CLIENTES] Error al eliminar:', error);
+    mostrarToast('error', 'Error', 'Error al eliminar cliente');
+  }
+}
+
+/**
+ * Función auxiliar para truncar texto
+ */
+function truncarTexto(texto, maxLength) {
+  if (!texto) return '';
+  if (texto.length <= maxLength) return texto;
+  return texto.substring(0, maxLength) + '...';
+}
+
+/**
+ * Modificar función cambiarVista para soportar vista de clientes
+ */
+var cambiarVistaConUsuarios = cambiarVista;
+cambiarVista = function(vista, elemento) {
+  vistaActual = vista;
+
+  document.querySelectorAll('.nav-item').forEach(function(item) { item.classList.remove('active'); });
+  if (elemento) elemento.classList.add('active');
+
+  // Ocultar todas las secciones
+  var statsGrid = document.querySelector('.stats-grid');
+  var filtersBar = document.querySelector('.filters-bar');
+  var tableContainer = document.querySelector('.table-container');
+  var seccionUsuarios = document.getElementById('seccionUsuarios');
+  var seccionClientes = document.getElementById('seccionClientes');
+
+  // Ocultar todas las secciones primero
+  if (statsGrid) statsGrid.style.display = 'none';
+  if (filtersBar) filtersBar.style.display = 'none';
+  if (tableContainer) tableContainer.style.display = 'none';
+  if (seccionUsuarios) seccionUsuarios.style.display = 'none';
+  if (seccionClientes) seccionClientes.style.display = 'none';
+
+  if (vista === 'clientes') {
+    // Mostrar sección de clientes
+    if (seccionClientes) seccionClientes.style.display = 'block';
+
+    document.getElementById('vistaTitle').textContent = '👤 Gestión de Clientes';
+    document.getElementById('vistaSubtitle').textContent = 'Administrar clientes registrados';
+
+    // Cargar clientes si no están cargados
+    if (clientesGlobal.length === 0) {
+      cargarListaClientes();
+    }
+  } else if (vista === 'usuarios') {
+    // Mostrar sección de usuarios
+    if (seccionUsuarios) seccionUsuarios.style.display = 'block';
+
+    document.getElementById('vistaTitle').textContent = '👥 Gestión de Usuarios';
+    document.getElementById('vistaSubtitle').textContent = 'Administrar usuarios del sistema';
+
+    // Cargar usuarios si no están cargados
+    if (usuariosCache.length === 0) {
+      cargarListaUsuarios();
+    }
+  } else {
+    // Mostrar vista de pedidos
+    if (statsGrid) statsGrid.style.display = 'grid';
+    if (filtersBar) filtersBar.style.display = 'flex';
+    if (tableContainer) tableContainer.style.display = 'block';
+
+    var titulos = {
+      'admin': { titulo: '📊 Dashboard Pedidos', subtitulo: 'Vista completa de todos los pedidos' },
+      'cocina': { titulo: '👨‍🍳 Pedidos Comanda', subtitulo: 'Pedidos pendientes y en preparación' },
+      'domicilio': { titulo: '🛵 Pedidos Domicilio', subtitulo: 'Pedidos listos para entregar' }
+    };
+
+    if (titulos[vista]) {
+      document.getElementById('vistaTitle').textContent = titulos[vista].titulo;
+      document.getElementById('vistaSubtitle').textContent = titulos[vista].subtitulo;
+    }
+
+    filtrosActuales.vistaRol = vista === 'admin' ? null : vista;
+    cargarDatosDashboard();
+  }
+};
+
+// Agregar inicialización de módulo de clientes al cargar el dashboard
+var iniciarDashboardConUsuarios = iniciarDashboard;
+iniciarDashboard = function() {
+  iniciarDashboardConUsuarios();
+
+  // Inicializar módulo de clientes después de cargar el dashboard
+  setTimeout(function() {
+    inicializarModuloClientes();
+  }, 150);
+};
+
+console.log('✅ FASE 9.3 - Módulo Gestión de Clientes cargado correctamente');
+
+</script>
+
+<style>
+/* Estilos adicionales para el nuevo Dashboard V18 - Fase 8.3 */
+.admin-estado-control {
+  background: linear-gradient(135deg, #EBF5FF 0%, #F0FDF4 100%);
+  border: 2px solid #3B82F6;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 15px;
+}
+
+.select-estado-admin {
+  padding: 10px 14px;
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 14px;
+  min-width: 200px;
+  background: white;
+  cursor: pointer;
+}
+
+.select-estado-admin:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.btn-guardar-estado {
+  background: linear-gradient(135deg, #10B981, #059669) !important;
+  color: white !important;
+}
+
+.btn-guardar-estado:disabled {
+  background: var(--gray-300) !important;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn-guardar-estado:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+/* Timeline de historial */
+.historial-estados-container {
+  background: var(--gray-50);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.timeline-container {
+  position: relative;
+  padding-left: 30px;
+}
+
+.timeline-container::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-color);
+}
+
+.timeline-item {
+  position: relative;
+  padding-bottom: 16px;
+  margin-bottom: 8px;
+}
+
+.timeline-item:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+.timeline-marker {
+  position: absolute;
+  left: -26px;
+  width: 24px;
+  height: 24px;
+  background: white;
+  border: 2px solid var(--border-color);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.timeline-item.timeline-active .timeline-marker {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.timeline-content {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.timeline-header strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.timeline-time {
+  font-size: 11px;
+  color: var(--text-light);
+}
+
+.timeline-details {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.timeline-role {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.timeline-notes {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--warning-light);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #92400E;
+}
+
+/* FASE 8.3: Estilos para badge de tipo entrega */
+.badge-tipo-entrega {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+</style>

@@ -1,0 +1,3054 @@
+// ============================================
+// CÓDIGO BACKEND - CLOUDPYME POS V19
+// Refactorizado: Codificación UTF-8 Corregida
+// ============================================
+
+const CONFIG = {
+  SHEET_ID: '1EsRSQQIcvUPYph1dDcRyc-8Zga8cbJzjerYUVKby2WE',
+  SHEETS: {
+    CONFIGURACION: 'Configuracion',
+    USUARIOS: 'Usuarios',
+    CATEGORIAS: 'Categorias',
+    PRODUCTOS: 'Productos',
+    ADICIONES: 'Adiciones',
+    PEDIDOS: 'Pedidos',
+    DETALLE_PEDIDOS: 'Detalle_Pedidos',
+    PROCESO_DELIVERY: 'Proceso_Delivery',
+    CLIENTES: 'Clientes',
+    MESAS: 'Mesas'
+  },
+  ROLES_INTERNOS: ['Administrador', 'Admin', 'Cocina', 'Domiciliario', 'Repartidor', 'Cajero'],
+  ROLES_SUPER_ADMIN: ['Administrador', 'Admin'],
+  FLUJO_ESTADOS: ['Solicitado', 'Recibido', 'Enviado', 'Entregado'],
+  ESTADOS_CIERRE: ['Abierto', 'Cerrado', 'Cancelado']
+};
+
+// ============================================
+// FUNCIÓN doGet - PUNTO DE ENTRADA
+// ============================================
+function doGet(e) {
+  try {
+    const vista = e && e.parameter ? e.parameter.vista : null;
+    
+    if (vista === 'dashboard') {
+      return servirDashboard();
+    }
+    if (vista === 'meseros') {
+      return servirPanelMeseros();
+    }
+    return servirMenuCliente();
+  } catch (error) {
+    Logger.log('Error en doGet: ' + error.toString());
+    return HtmlService.createHtmlOutput('<h1>Error</h1><p>' + error.toString() + '</p>');
+  }
+}
+
+function servirPanelMeseros() {
+  const template = HtmlService.createTemplateFromFile('Meseros');
+  return template.evaluate()
+    .setTitle('Panel Meseros - CloudPyme POS')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+}
+
+function servirMenuCliente() {
+  const template = HtmlService.createTemplateFromFile('Index');
+  return template.evaluate()
+    .setTitle('Menú Interactivo - Restaurante')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+}
+
+function servirDashboard() {
+  const template = HtmlService.createTemplateFromFile('Dashboard');
+  return template.evaluate()
+    .setTitle('Dashboard Operativo - CloudPyme POS')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// ============================================
+// UTILIDADES
+// ============================================
+function compararIds(id1, id2) {
+  const str1 = String(id1 || '').trim().toUpperCase();
+  const str2 = String(id2 || '').trim().toUpperCase();
+  return str1 === str2;
+}
+
+function esRolInterno(rol) {
+  const rolNormalizado = String(rol || '').trim();
+  return CONFIG.ROLES_INTERNOS.some(r => r.toLowerCase() === rolNormalizado.toLowerCase());
+}
+
+function esRolSuperAdmin(rol) {
+  const rolNormalizado = String(rol || '').trim();
+  return CONFIG.ROLES_SUPER_ADMIN.some(r => r.toLowerCase() === rolNormalizado.toLowerCase());
+}
+
+function obtenerTimestampColombia() {
+  const ahora = new Date();
+  const offsetColombia = -5 * 60 * 60 * 1000;
+  const offsetLocal = ahora.getTimezoneOffset() * 60 * 1000;
+  return new Date(ahora.getTime() + offsetLocal + offsetColombia);
+}
+
+function obtenerFechaColombia(fecha) {
+  var fechaObj = fecha ? new Date(fecha) : new Date();
+  return Utilities.formatDate(fechaObj, "America/Bogota", "dd/MM/yyyy");
+}
+
+function normalizarFechaAString(fecha) {
+  if (!fecha) return null;
+  
+  if (fecha instanceof Date) {
+    return Utilities.formatDate(fecha, "America/Bogota", "yyyy-MM-dd");
+  }
+  
+  const fechaStr = String(fecha).trim();
+  
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fechaStr)) {
+    return fechaStr;
+  }
+  
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(fechaStr)) {
+    const parts = fechaStr.split('/');
+    return parts[2] + '-' + parts[1] + '-' + parts[0];
+  }
+  
+  if (fechaStr.includes('T')) {
+    return fechaStr.split('T')[0];
+  }
+  
+  try {
+    const dateObj = new Date(fechaStr);
+    if (!isNaN(dateObj.getTime())) {
+      return Utilities.formatDate(dateObj, "America/Bogota", "yyyy-MM-dd");
+    }
+  } catch (e) {
+    Logger.log('Error al normalizar fecha: ' + e.toString());
+  }
+  
+  return null;
+}
+
+// ============================================
+// INICIALIZACIÓN DE TABLA PROCESO_DELIVERY
+// ============================================
+function inicializarTablaProcesoDelivery() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.PROCESO_DELIVERY);
+    
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEETS.PROCESO_DELIVERY);
+      const headers = ['ID_Delivery', 'ID_Pedido', 'Cliente_ID', 'Usuario_Cambio', 'Nombre_Usuario', 'Area_Rol', 'Estado_Anterior', 'Estado_Nuevo', 'Fecha_Hora', 'Notas'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      Logger.log('✅ Tabla Proceso_Delivery creada exitosamente');
+      return { success: true, message: 'Tabla creada exitosamente' };
+    }
+    return { success: true, message: 'Tabla ya existe' };
+  } catch (error) {
+    Logger.log('❌ Error al inicializar Proceso_Delivery: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function registrarCambioEstado(idPedido, idCliente, idUsuario, nombreUsuario, rol, estadoAnterior, estadoNuevo, notas) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.PROCESO_DELIVERY);
+    if (!sheet) {
+      inicializarTablaProcesoDelivery();
+      sheet = ss.getSheetByName(CONFIG.SHEETS.PROCESO_DELIVERY);
+    }
+    const lastRow = sheet.getLastRow();
+    const idDelivery = 'DEL' + String(lastRow).padStart(6, '0');
+    const timestamp = obtenerTimestampColombia();
+    const newRow = [idDelivery, idPedido, idCliente, idUsuario, nombreUsuario || 'Sistema', rol || 'Sistema', estadoAnterior || 'N/A', estadoNuevo, timestamp, notas || ''];
+    sheet.appendRow(newRow);
+    Logger.log('✅ Cambio de estado registrado: ' + idDelivery);
+    return { success: true, idDelivery: idDelivery };
+  } catch (error) {
+    Logger.log('❌ Error al registrar cambio: ' + error.toString());
+    return { success: false, message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function obtenerHistorialPedido(idPedido) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.PROCESO_DELIVERY);
+    if (!sheet) return { success: true, historial: [] };
+    
+    const data = sheet.getDataRange().getValues();
+    const historial = [];
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (String(row[1]).trim().toUpperCase() === idPedidoStr) {
+        historial.push({
+          idDelivery: String(row[0]),
+          idPedido: String(row[1]),
+          idCliente: String(row[2]),
+          idUsuario: String(row[3]),
+          nombreUsuario: String(row[4]),
+          rol: String(row[5]),
+          estadoAnterior: String(row[6]),
+          estadoNuevo: String(row[7]),
+          fechaHora: row[8] instanceof Date ? row[8].toISOString() : String(row[8]),
+          notas: String(row[9] || '')
+        });
+      }
+    }
+    historial.sort((a, b) => new Date(a.fechaHora) - new Date(b.fechaHora));
+    return { success: true, historial: historial };
+  } catch (error) {
+    Logger.log('Error en obtenerHistorialPedido: ' + error.toString());
+    return { success: false, message: error.toString(), historial: [] };
+  }
+}
+
+// ============================================
+// AUTENTICACIÓN Y SESIÓN
+// ============================================
+function validarLogin(email, password) {
+  try {
+    Logger.log('Intentando login para: ' + email);
+    const sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.SHEETS.USUARIOS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const userEmail = String(row[1] || '').trim().toLowerCase();
+      const userPassword = String(row[2] || '');
+      const activo = row[8];
+      
+      if (userEmail === email.toLowerCase().trim() && userPassword === password && activo === true) {
+        Logger.log('Login exitoso para usuario ID: ' + row[0]);
+        const rol = row[7];
+        return {
+          success: true,
+          user: {
+            id: String(row[0]).trim(),
+            email: row[1],
+            nombre: row[3],
+            telefono: row[4],
+            direccion: row[5],
+            rol: rol,
+            permisos: row[9],
+            esInterno: esRolInterno(rol),
+            esSuperAdmin: esRolSuperAdmin(rol)
+          }
+        };
+      }
+    }
+    Logger.log('Login fallido - credenciales incorrectas');
+    return { success: false, message: 'Usuario o contraseña incorrectos' };
+  } catch (error) {
+    Logger.log('Error en validarLogin: ' + error.toString());
+    return { success: false, message: 'Error al validar credenciales: ' + error.toString() };
+  }
+}
+
+function validarLoginDashboard(email, password) {
+  try {
+    const result = validarLogin(email, password);
+    if (!result.success) return result;
+    if (!result.user.esInterno) {
+      return { success: false, message: 'No tiene permisos para acceder al Dashboard. Solo personal interno.' };
+    }
+    return result;
+  } catch (error) {
+    Logger.log('Error en validarLoginDashboard: ' + error.toString());
+    return { success: false, message: 'Error al validar credenciales: ' + error.toString() };
+  }
+}
+
+function registrarUsuario(datos) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    const sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.SHEETS.USUARIOS);
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][1]).toLowerCase().trim() === datos.email.toLowerCase().trim()) {
+        return { success: false, message: 'El correo electrónico ya está registrado' };
+      }
+    }
+    const lastRow = sheet.getLastRow();
+    const newId = lastRow > 1 ? 'CLI' + String(lastRow).padStart(5, '0') : 'CLI00001';
+    const newRow = [newId, datos.email, datos.password, datos.nombre, datos.telefono, datos.direccion, new Date(), 'Clientes', true, ''];
+    sheet.appendRow(newRow);
+    Logger.log('Usuario registrado con ID: ' + newId);
+    return {
+      success: true,
+      message: 'Usuario registrado exitosamente',
+      user: { id: newId, email: datos.email, nombre: datos.nombre, telefono: datos.telefono, direccion: datos.direccion, rol: 'Clientes', esInterno: false, esSuperAdmin: false }
+    };
+  } catch (error) {
+    Logger.log('Error en registrarUsuario: ' + error.toString());
+    return { success: false, message: 'Error al registrar usuario: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================
+// CONFIGURACIÓN DE LA EMPRESA
+// ============================================
+function obtenerConfiguracion() {
+  try {
+    const sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.SHEETS.CONFIGURACION);
+    const data = sheet.getDataRange().getValues();
+    const config = {};
+    for (let i = 1; i < data.length; i++) {
+      const parametro = String(data[i][0] || '').trim();
+      const valor = data[i][1];
+      if (parametro) {
+        const parametroNormalizado = parametro.replace(/\s+/g, '').replace(/^(.)/, (m, p1) => p1.toLowerCase());
+        config[parametroNormalizado] = valor;
+        config[parametro] = valor;
+      }
+    }
+    const defaults = { nombreEmpresa: 'CloudPyme Restaurant', colorPrimario: '#3B82F6', colorSecundario: '#1E40AF', colorAcento: '#F59E0B', moneda: '$', logoUrl: '', nit: '', direccion: '', telefono: '', email: '', slogan: 'Sistema de Gestión de Pedidos' };
+    for (const [key, defaultValue] of Object.entries(defaults)) {
+      if (!config[key] && config[key] !== 0 && config[key] !== false) config[key] = defaultValue;
+    }
+    return { success: true, config: config };
+  } catch (error) {
+    Logger.log('Error en obtenerConfiguracion: ' + error.toString());
+    return { success: false, message: 'Error al cargar configuración', config: { nombreEmpresa: 'CloudPyme Restaurant', colorPrimario: '#3B82F6', colorSecundario: '#1E40AF', colorAcento: '#F59E0B', moneda: '$', logoUrl: '', nit: '', direccion: '', telefono: '' } };
+  }
+}
+
+// ============================================
+// CATEGORÍAS
+// ============================================
+function obtenerCategorias() {
+  try {
+    const sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.SHEETS.CATEGORIAS);
+    const data = sheet.getDataRange().getValues();
+    const categorias = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const activo = row[5];
+      const esActivo = activo === true || String(activo).toUpperCase() === 'SI' || String(activo).toUpperCase() === 'SÍ' || String(activo).toUpperCase() === 'TRUE' || activo === 1;
+      if (esActivo) {
+        categorias.push({ id: String(row[0]).trim(), nombre: String(row[1] || '').trim(), descripcion: String(row[2] || '').trim(), icono: String(row[3] || '🍽️').trim(), orden: Number(row[4]) || 0, activo: true, imagen: String(row[6] || '').trim() });
+      }
+    }
+    categorias.sort((a, b) => a.orden - b.orden);
+    return { success: true, categorias: categorias };
+  } catch (error) {
+    Logger.log('Error en obtenerCategorias: ' + error.toString());
+    return { success: false, message: 'Error al cargar categorías: ' + error.toString(), categorias: [] };
+  }
+}
+
+// ============================================
+// PRODUCTOS
+// ============================================
+function obtenerProductos(idCategoria) {
+  try {
+    const sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.SHEETS.PRODUCTOS);
+    const data = sheet.getDataRange().getValues();
+    const productos = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (row[6] === true) {
+        const categoriaProducto = String(row[1]);
+        if (!idCategoria || idCategoria === 'TODOS' || compararIds(categoriaProducto, idCategoria)) {
+          productos.push({ id: String(row[0]), categoria: categoriaProducto, nombre: row[2], descripcion: row[3], precio: row[4], imagen: row[5], disponible: row[6], tiempoPreparacion: row[7], calorias: row[8] });
+        }
+      }
+    }
+    return { success: true, productos: productos };
+  } catch (error) {
+    Logger.log('Error en obtenerProductos: ' + error.toString());
+    return { success: false, message: 'Error al cargar productos', productos: [] };
+  }
+}
+
+// ============================================
+// ADICIONES
+// ============================================
+function obtenerAdiciones(idCategoria) {
+  try {
+    const sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.SHEETS.ADICIONES);
+    const data = sheet.getDataRange().getValues();
+    const adiciones = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (row[4] === true) {
+        const categoriasAplicables = row[3] ? String(row[3]).split(',').map(c => c.trim().toUpperCase()) : [];
+        const idCatUpper = String(idCategoria || '').toUpperCase();
+        if (categoriasAplicables.length === 0 || categoriasAplicables.includes(idCatUpper) || categoriasAplicables.includes('TODOS')) {
+          adiciones.push({ id: String(row[0]), nombre: row[1], precio: row[2] });
+        }
+      }
+    }
+    return { success: true, adiciones: adiciones };
+  } catch (error) {
+    Logger.log('Error en obtenerAdiciones: ' + error.toString());
+    return { success: false, message: 'Error al cargar adiciones', adiciones: [] };
+  }
+}
+
+// ============================================
+// PEDIDOS - FUNCIONES CLIENTE
+// ============================================
+function obtenerMisPedidos(idCliente) {
+  try {
+    Logger.log('INICIO obtenerMisPedidos - ID Cliente: ' + idCliente);
+    if (!idCliente) return { success: false, message: 'ID de cliente no proporcionado', pedidos: [] };
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    if (!sheetPedidos) return { success: false, message: 'Hoja de Pedidos no encontrada', pedidos: [] };
+    
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    const pedidos = [];
+    const idClienteStr = String(idCliente).trim().toUpperCase();
+    
+    for (let i = 1; i < dataPedidos.length; i++) {
+      const row = dataPedidos[i];
+      const pedidoIdCliente = String(row[1]).trim().toUpperCase();
+      if (pedidoIdCliente === idClienteStr) {
+        const tieneNuevaEstructura = row.length >= 16;
+        let fechaPedido, estadoLogistico;
+        if (tieneNuevaEstructura) {
+          fechaPedido = row[2] instanceof Date ? row[2].toISOString() : String(row[2]);
+          estadoLogistico = String(row[4] || 'Solicitado');
+        } else {
+          fechaPedido = row[2] instanceof Date ? row[2].toISOString() : String(row[2]);
+          estadoLogistico = String(row[3] || 'Solicitado');
+        }
+        pedidos.push({
+          idPedido: String(row[0]),
+          idCliente: String(row[1]),
+          fechaPedido: fechaPedido,
+          estado: estadoLogistico,
+          tipoEntrega: String(row[tieneNuevaEstructura ? 5 : 4] || ''),
+          direccionEntrega: String(row[tieneNuevaEstructura ? 6 : 5] || ''),
+          telefonoContacto: String(row[tieneNuevaEstructura ? 7 : 6] || ''),
+          subtotal: Number(row[tieneNuevaEstructura ? 8 : 7]) || 0,
+          descuento: Number(row[tieneNuevaEstructura ? 9 : 8]) || 0,
+          total: Number(row[tieneNuevaEstructura ? 10 : 9]) || 0,
+          metodoPago: String(row[tieneNuevaEstructura ? 11 : 10] || 'Efectivo'),
+          notas: String(row[tieneNuevaEstructura ? 12 : 11] || '')
+        });
+      }
+    }
+    pedidos.sort((a, b) => new Date(b.fechaPedido) - new Date(a.fechaPedido));
+    return { success: true, pedidos: pedidos };
+  } catch (error) {
+    Logger.log('ERROR en obtenerMisPedidos: ' + error.toString());
+    return { success: false, message: 'Error al cargar pedidos: ' + error.toString(), pedidos: [] };
+  }
+}
+
+function obtenerDetallePedidoConHistorial(idPedido, idCliente) {
+  try {
+    const detalleResult = obtenerDetallePedido(idPedido, idCliente);
+    if (!detalleResult.success) return detalleResult;
+    const historialResult = obtenerHistorialPedido(idPedido);
+    return { success: true, items: detalleResult.items, historial: historialResult.success ? historialResult.historial : [] };
+  } catch (error) {
+    Logger.log('Error en obtenerDetallePedidoConHistorial: ' + error.toString());
+    return { success: false, message: 'Error al cargar detalle: ' + error.toString(), items: [], historial: [] };
+  }
+}
+
+function obtenerDetallePedido(idPedido, idCliente) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    const idClienteStr = String(idCliente).trim().toUpperCase();
+    
+    let pedidoValido = false;
+    for (let i = 1; i < dataPedidos.length; i++) {
+      const pedidoEnFila = String(dataPedidos[i][0]).trim().toUpperCase();
+      const clienteEnFila = String(dataPedidos[i][1]).trim().toUpperCase();
+      if (pedidoEnFila === idPedidoStr && clienteEnFila === idClienteStr) {
+        pedidoValido = true;
+        break;
+      }
+    }
+    if (!pedidoValido) return { success: false, message: 'No tiene permisos para ver este pedido', items: [] };
+    
+    const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
+    const dataDetalle = sheetDetalle.getDataRange().getValues();
+    const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
+    const dataProductos = sheetProductos.getDataRange().getValues();
+    const items = [];
+    
+    for (let i = 1; i < dataDetalle.length; i++) {
+      const row = dataDetalle[i];
+      const detalleIdPedido = String(row[1]).trim().toUpperCase();
+      if (detalleIdPedido === idPedidoStr) {
+        let nombreProducto = 'Producto no encontrado';
+        const idProductoBuscado = String(row[3]).trim().toUpperCase();
+        for (let j = 1; j < dataProductos.length; j++) {
+          const idProductoEnFila = String(dataProductos[j][0]).trim().toUpperCase();
+          if (idProductoEnFila === idProductoBuscado) {
+            nombreProducto = dataProductos[j][2];
+            break;
+          }
+        }
+        items.push({ idDetalle: String(row[0]), idPedido: String(row[1]), idProducto: String(row[3]), nombreProducto: nombreProducto, cantidad: Number(row[4]) || 1, precioUnitario: Number(row[5]) || 0, adiciones: String(row[6] || ''), precioAdiciones: Number(row[7]) || 0, subtotalItem: Number(row[8]) || 0 });
+      }
+    }
+    return { success: true, items: items };
+  } catch (error) {
+    Logger.log('Error en obtenerDetallePedido: ' + error.toString());
+    return { success: false, message: 'Error al cargar detalle del pedido: ' + error.toString(), items: [] };
+  }
+}
+
+function crearPedido(pedidoData) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    Logger.log('Creando pedido para cliente: ' + pedidoData.idCliente);
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
+    const lastRow = sheetPedidos.getLastRow();
+    const idPedido = 'PED' + String(lastRow).padStart(6, '0');
+    const timestamp = obtenerTimestampColombia();
+    const fechaSolo = obtenerFechaColombia(timestamp);
+    
+    const rowPedido = [idPedido, pedidoData.idCliente, timestamp, fechaSolo, 'Solicitado', pedidoData.tipoEntrega || 'Recoger en tienda', pedidoData.direccionEntrega || '', pedidoData.telefonoContacto || '', pedidoData.subtotal, pedidoData.descuento || 0, pedidoData.total, pedidoData.metodoPago || 'Efectivo', pedidoData.notas || '', 'Abierto', '', ''];
+    sheetPedidos.appendRow(rowPedido);
+    
+    registrarCambioEstado(idPedido, pedidoData.idCliente, 'SISTEMA', 'Sistema', 'Sistema', 'N/A', 'Solicitado', 'Pedido creado por cliente');
+    
+    pedidoData.items.forEach((item, index) => {
+      const idDetalle = idPedido + '-' + String(index + 1).padStart(3, '0');
+      const rowDetalle = [idDetalle, idPedido, pedidoData.idCliente, item.idProducto, item.cantidad, item.precioUnitario, item.adiciones || '', item.precioAdiciones || 0, item.subtotalItem];
+      sheetDetalle.appendRow(rowDetalle);
+    });
+    
+    Logger.log('Pedido creado exitosamente: ' + idPedido);
+    return { success: true, message: 'Pedido creado exitosamente', idPedido: idPedido };
+  } catch (error) {
+    Logger.log('Error en crearPedido: ' + error.toString());
+    return { success: false, message: 'Error al crear pedido: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================
+// DASHBOARD - FUNCIONES PRINCIPALES
+// ============================================
+function obtenerPedidosDashboard(filtros) {
+  try {
+    Logger.log('========================================');
+    Logger.log('DASHBOARD - Obteniendo pedidos');
+    Logger.log('Filtros recibidos: ' + JSON.stringify(filtros));
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const sheetUsuarios = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+    
+    if (!sheetPedidos) return { success: false, message: 'Hoja de Pedidos no encontrada', pedidos: [] };
+    
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    const dataUsuarios = sheetUsuarios ? sheetUsuarios.getDataRange().getValues() : [];
+    
+    const headers = dataPedidos[0];
+    const tieneNuevaEstructura = headers.length >= 16 && (String(headers[2]).toLowerCase().includes('marca') || String(headers[3]).toLowerCase().includes('fecha'));
+    Logger.log('Estructura detectada: ' + (tieneNuevaEstructura ? 'NUEVA' : 'ANTIGUA'));
+    
+    const COL = tieneNuevaEstructura ? {
+      ID_PEDIDO: 0, ID_CLIENTE: 1, MARCA_TIEMPO: 2, FECHA: 3, ESTADO_LOGISTICO: 4,
+      TIPO_ENTREGA: 5, DIRECCION_ENTREGA: 6, TELEFONO_CONTACTO: 7, SUBTOTAL: 8,
+      DESCUENTO: 9, TOTAL: 10, METODO_PAGO: 11, NOTAS: 12, ESTADO_CIERRE: 13,
+      MOTIVO_CANCELACION: 14, ATENDIDO_POR: 15
+    } : {
+      ID_PEDIDO: 0, ID_CLIENTE: 1, MARCA_TIEMPO: 2, FECHA: 2, ESTADO_LOGISTICO: 3,
+      TIPO_ENTREGA: 4, DIRECCION_ENTREGA: 5, TELEFONO_CONTACTO: 6, SUBTOTAL: 7,
+      DESCUENTO: 8, TOTAL: 9, METODO_PAGO: 10, NOTAS: 11, ESTADO_CIERRE: 12,
+      MOTIVO_CANCELACION: 13, ATENDIDO_POR: 14
+    };
+    
+    // Crear mapa de clientes
+    const clientesMap = {};
+    for (let i = 1; i < dataUsuarios.length; i++) {
+      const row = dataUsuarios[i];
+      const idCliente = String(row[0]).trim().toUpperCase();
+      clientesMap[idCliente] = { nombre: row[3] || 'Sin nombre', email: row[1] || '', telefono: row[4] || '', direccion: row[5] || '' };
+    }
+    
+    const pedidos = [];
+    
+    // Normalizar fecha del filtro a string YYYY-MM-DD
+    let fechaFiltroStr = null;
+    if (filtros && filtros.fecha) {
+      fechaFiltroStr = String(filtros.fecha).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaFiltroStr)) {
+        fechaFiltroStr = normalizarFechaAString(filtros.fecha);
+      }
+      Logger.log('Fecha filtro normalizada: ' + fechaFiltroStr);
+    }
+    
+    for (let i = 1; i < dataPedidos.length; i++) {
+      const row = dataPedidos[i];
+      const marcaTiempo = row[COL.MARCA_TIEMPO];
+      const fechaPedido = marcaTiempo instanceof Date ? marcaTiempo : new Date(marcaTiempo);
+      const estadoLogistico = String(row[COL.ESTADO_LOGISTICO] || 'Solicitado').trim();
+      const estadoCierre = String(row[COL.ESTADO_CIERRE] || 'Abierto').trim();
+      const tipoEntrega = String(row[COL.TIPO_ENTREGA] || '').trim();
+      
+      // Filtro de fecha usando comparación de strings
+      if (fechaFiltroStr) {
+        let fechaPedidoStr = null;
+        if (tieneNuevaEstructura && row[COL.FECHA]) {
+          fechaPedidoStr = normalizarFechaAString(row[COL.FECHA]);
+        } else {
+          fechaPedidoStr = normalizarFechaAString(marcaTiempo);
+        }
+        // Comparación directa de strings - SIN problemas de timezone
+        if (fechaPedidoStr !== fechaFiltroStr) {
+          continue;
+        }
+      }
+      
+      // FILTRO: Estado Logístico (Etapa)
+      if (filtros && filtros.etapa && filtros.etapa !== 'Todos') {
+        if (estadoLogistico.toLowerCase() !== filtros.etapa.toLowerCase()) continue;
+      }
+      
+      // FILTRO: Estado de Cierre Contable
+      if (filtros && filtros.estadoCierre && filtros.estadoCierre !== 'Todos') {
+        if (estadoCierre.toLowerCase() !== filtros.estadoCierre.toLowerCase()) continue;
+      }
+      
+      // FILTRO: Tipo de Entrega
+      if (filtros && filtros.tipoEntrega && filtros.tipoEntrega !== 'Todos') {
+        if (tipoEntrega.toLowerCase() !== filtros.tipoEntrega.toLowerCase()) continue;
+      }
+      
+      // FILTRO: Vista según rol
+      if (filtros && filtros.vistaRol) {
+        if (filtros.vistaRol === 'cocina') {
+          if (!['solicitado', 'recibido'].includes(estadoLogistico.toLowerCase())) continue;
+        } else if (filtros.vistaRol === 'domicilio') {
+          if (estadoLogistico.toLowerCase() !== 'enviado') continue;
+        }
+      }
+      
+      const idCliente = String(row[COL.ID_CLIENTE]).trim().toUpperCase();
+      const cliente = clientesMap[idCliente] || { nombre: 'Cliente no encontrado', email: '', telefono: '', direccion: '' };
+      
+      pedidos.push({
+        idPedido: String(row[COL.ID_PEDIDO]),
+        idCliente: String(row[COL.ID_CLIENTE]),
+        nombreCliente: cliente.nombre,
+        emailCliente: cliente.email,
+        telefonoCliente: cliente.telefono || row[COL.TELEFONO_CONTACTO],
+        fechaPedido: fechaPedido.toISOString(),
+        estadoLogistico: estadoLogistico,
+        tipoEntrega: tipoEntrega,
+        direccionEntrega: String(row[COL.DIRECCION_ENTREGA] || cliente.direccion || ''),
+        telefonoContacto: String(row[COL.TELEFONO_CONTACTO] || ''),
+        subtotal: Number(row[COL.SUBTOTAL]) || 0,
+        descuento: Number(row[COL.DESCUENTO]) || 0,
+        total: Number(row[COL.TOTAL]) || 0,
+        metodoPago: String(row[COL.METODO_PAGO] || 'Efectivo'),
+        notas: String(row[COL.NOTAS] || ''),
+        estadoCierre: estadoCierre,
+        motivoCancelacion: String(row[COL.MOTIVO_CANCELACION] || ''),
+        atendidoPor: String(row[COL.ATENDIDO_POR] || '')
+      });
+    }
+    
+    pedidos.sort((a, b) => new Date(b.fechaPedido) - new Date(a.fechaPedido));
+    Logger.log('Total pedidos encontrados: ' + pedidos.length);
+    return { success: true, pedidos: pedidos, total: pedidos.length };
+  } catch (error) {
+    Logger.log('ERROR en obtenerPedidosDashboard: ' + error.toString());
+    Logger.log('Stack: ' + error.stack);
+    return { success: false, message: 'Error al cargar pedidos: ' + error.toString(), pedidos: [] };
+  }
+}
+
+function obtenerDetallePedidoDashboard(idPedido) {
+  try {
+    Logger.log('DASHBOARD - Obteniendo detalle de pedido: ' + idPedido);
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
+    const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
+    const sheetUsuarios = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+    
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    const dataDetalle = sheetDetalle.getDataRange().getValues();
+    const dataProductos = sheetProductos.getDataRange().getValues();
+    const dataUsuarios = sheetUsuarios.getDataRange().getValues();
+    
+    const headers = dataPedidos[0];
+    const tieneNuevaEstructura = headers.length >= 16;
+    
+    const COL = tieneNuevaEstructura ? {
+      ID_PEDIDO: 0, ID_CLIENTE: 1, MARCA_TIEMPO: 2, FECHA: 3, ESTADO_LOGISTICO: 4,
+      TIPO_ENTREGA: 5, DIRECCION_ENTREGA: 6, TELEFONO_CONTACTO: 7, SUBTOTAL: 8,
+      DESCUENTO: 9, TOTAL: 10, METODO_PAGO: 11, NOTAS: 12, ESTADO_CIERRE: 13,
+      MOTIVO_CANCELACION: 14, ATENDIDO_POR: 15
+    } : {
+      ID_PEDIDO: 0, ID_CLIENTE: 1, MARCA_TIEMPO: 2, FECHA: 2, ESTADO_LOGISTICO: 3,
+      TIPO_ENTREGA: 4, DIRECCION_ENTREGA: 5, TELEFONO_CONTACTO: 6, SUBTOTAL: 7,
+      DESCUENTO: 8, TOTAL: 9, METODO_PAGO: 10, NOTAS: 11, ESTADO_CIERRE: 12,
+      MOTIVO_CANCELACION: 13, ATENDIDO_POR: 14
+    };
+    
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    let pedido = null;
+    
+    for (let i = 1; i < dataPedidos.length; i++) {
+      const row = dataPedidos[i];
+      if (String(row[COL.ID_PEDIDO]).trim().toUpperCase() === idPedidoStr) {
+        pedido = {
+          idPedido: String(row[COL.ID_PEDIDO]),
+          idCliente: String(row[COL.ID_CLIENTE]),
+          fechaPedido: row[COL.MARCA_TIEMPO] instanceof Date ? row[COL.MARCA_TIEMPO].toISOString() : String(row[COL.MARCA_TIEMPO]),
+          estadoLogistico: String(row[COL.ESTADO_LOGISTICO] || 'Solicitado'),
+          tipoEntrega: String(row[COL.TIPO_ENTREGA] || ''),
+          direccionEntrega: String(row[COL.DIRECCION_ENTREGA] || ''),
+          telefonoContacto: String(row[COL.TELEFONO_CONTACTO] || ''),
+          subtotal: Number(row[COL.SUBTOTAL]) || 0,
+          descuento: Number(row[COL.DESCUENTO]) || 0,
+          total: Number(row[COL.TOTAL]) || 0,
+          metodoPago: String(row[COL.METODO_PAGO] || 'Efectivo'),
+          notas: String(row[COL.NOTAS] || ''),
+          estadoCierre: String(row[COL.ESTADO_CIERRE] || 'Abierto'),
+          motivoCancelacion: String(row[COL.MOTIVO_CANCELACION] || ''),
+          atendidoPor: String(row[COL.ATENDIDO_POR] || '')
+        };
+        break;
+      }
+    }
+    
+    if (!pedido) return { success: false, message: 'Pedido no encontrado' };
+    
+    const idClienteStr = pedido.idCliente.trim().toUpperCase();
+    for (let i = 1; i < dataUsuarios.length; i++) {
+      if (String(dataUsuarios[i][0]).trim().toUpperCase() === idClienteStr) {
+        pedido.nombreCliente = dataUsuarios[i][3] || 'Sin nombre';
+        pedido.emailCliente = dataUsuarios[i][1] || '';
+        pedido.telefonoCliente = dataUsuarios[i][4] || '';
+        pedido.direccionCliente = dataUsuarios[i][5] || '';
+        break;
+      }
+    }
+    
+    const items = [];
+    for (let i = 1; i < dataDetalle.length; i++) {
+      const row = dataDetalle[i];
+      if (String(row[1]).trim().toUpperCase() === idPedidoStr) {
+        let nombreProducto = 'Producto no encontrado';
+        const idProductoBuscado = String(row[3]).trim().toUpperCase();
+        for (let j = 1; j < dataProductos.length; j++) {
+          if (String(dataProductos[j][0]).trim().toUpperCase() === idProductoBuscado) {
+            nombreProducto = dataProductos[j][2];
+            break;
+          }
+        }
+        items.push({ idDetalle: String(row[0]), idProducto: String(row[3]), nombreProducto: nombreProducto, cantidad: Number(row[4]) || 1, precioUnitario: Number(row[5]) || 0, adiciones: String(row[6] || ''), precioAdiciones: Number(row[7]) || 0, subtotalItem: Number(row[8]) || 0 });
+      }
+    }
+    pedido.items = items;
+    
+    const historialResult = obtenerHistorialPedido(idPedido);
+    pedido.historial = historialResult.success ? historialResult.historial : [];
+    
+    return { success: true, pedido: pedido };
+  } catch (error) {
+    Logger.log('Error en obtenerDetallePedidoDashboard: ' + error.toString());
+    return { success: false, message: 'Error al cargar detalle: ' + error.toString() };
+  }
+}
+
+function cambiarEstadoPedido(idPedido, nuevoEstado, idUsuario, motivoCancelacion, esSuperAdmin, nombreUsuario, rolUsuario) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    Logger.log('CAMBIO DE ESTADO - Pedido: ' + idPedido + ', Nuevo Estado: ' + nuevoEstado);
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    
+    const headers = dataPedidos[0];
+    const tieneNuevaEstructura = headers.length >= 16;
+    
+    const COL = tieneNuevaEstructura ? { ESTADO_LOGISTICO: 4, ESTADO_CIERRE: 13, MOTIVO_CANCELACION: 14, ATENDIDO_POR: 15 } : { ESTADO_LOGISTICO: 3, ESTADO_CIERRE: 12, MOTIVO_CANCELACION: 13, ATENDIDO_POR: 14 };
+    
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    let filaEncontrada = -1;
+    let estadoActual = '';
+    let idCliente = '';
+    
+    for (let i = 1; i < dataPedidos.length; i++) {
+      if (String(dataPedidos[i][0]).trim().toUpperCase() === idPedidoStr) {
+        filaEncontrada = i + 1;
+        estadoActual = String(dataPedidos[i][COL.ESTADO_LOGISTICO] || 'Solicitado');
+        idCliente = String(dataPedidos[i][1]);
+        break;
+      }
+    }
+    
+    if (filaEncontrada === -1) return { success: false, message: 'Pedido no encontrado' };
+    
+    const estadoNormalizado = nuevoEstado.trim();
+    
+    if (estadoNormalizado === 'Cancelado') {
+      if (estadoActual === 'Entregado') return { success: false, message: 'No se puede cancelar un pedido ya entregado' };
+      if (estadoActual === 'Cancelado') return { success: false, message: 'El pedido ya está cancelado' };
+      if (!motivoCancelacion || motivoCancelacion.trim() === '') return { success: false, message: 'Debe proporcionar un motivo de cancelación' };
+      
+      sheetPedidos.getRange(filaEncontrada, COL.ESTADO_LOGISTICO + 1).setValue('Cancelado');
+      sheetPedidos.getRange(filaEncontrada, COL.ESTADO_CIERRE + 1).setValue('Cancelado');
+      sheetPedidos.getRange(filaEncontrada, COL.MOTIVO_CANCELACION + 1).setValue(motivoCancelacion);
+      sheetPedidos.getRange(filaEncontrada, COL.ATENDIDO_POR + 1).setValue(idUsuario);
+      
+      registrarCambioEstado(idPedido, idCliente, idUsuario, nombreUsuario || 'Usuario', rolUsuario || 'N/A', estadoActual, 'Cancelado', 'Cancelado: ' + motivoCancelacion);
+      return { success: true, message: 'Pedido cancelado exitosamente', nuevoEstado: 'Cancelado' };
+    }
+    
+    const indiceActual = CONFIG.FLUJO_ESTADOS.indexOf(estadoActual);
+    const indiceNuevo = CONFIG.FLUJO_ESTADOS.indexOf(estadoNormalizado);
+    
+    if (indiceNuevo === -1) return { success: false, message: 'Estado no válido: ' + estadoNormalizado };
+    
+    if (!esSuperAdmin) {
+      if (indiceNuevo !== indiceActual + 1) {
+        return { success: false, message: 'Transición no permitida. De "' + estadoActual + '" solo puede pasar a "' + CONFIG.FLUJO_ESTADOS[indiceActual + 1] + '"' };
+      }
+    }
+    
+    sheetPedidos.getRange(filaEncontrada, COL.ESTADO_LOGISTICO + 1).setValue(estadoNormalizado);
+    
+    if (estadoNormalizado === 'Entregado') {
+      sheetPedidos.getRange(filaEncontrada, COL.ESTADO_CIERRE + 1).setValue('Cerrado');
+    } else if (estadoActual === 'Entregado' && estadoNormalizado !== 'Entregado') {
+      sheetPedidos.getRange(filaEncontrada, COL.ESTADO_CIERRE + 1).setValue('Abierto');
+    }
+    
+    sheetPedidos.getRange(filaEncontrada, COL.ATENDIDO_POR + 1).setValue(idUsuario);
+    
+    const notaAuditoria = esSuperAdmin && indiceNuevo !== indiceActual + 1 ? 'Cambio directo por Super Admin' : 'Cambio secuencial';
+    registrarCambioEstado(idPedido, idCliente, idUsuario, nombreUsuario || 'Usuario', rolUsuario || 'N/A', estadoActual, estadoNormalizado, notaAuditoria);
+    
+    return { success: true, message: 'Estado actualizado a "' + estadoNormalizado + '"', nuevoEstado: estadoNormalizado };
+  } catch (error) {
+    Logger.log('Error en cambiarEstadoPedido: ' + error.toString());
+    return { success: false, message: 'Error al cambiar estado: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function obtenerEstadisticasDashboard(fecha) {
+  try {
+    const filtros = { fecha: fecha || new Date().toISOString().split('T')[0] };
+    const resultado = obtenerPedidosDashboard(filtros);
+    if (!resultado.success) return resultado;
+    
+    const pedidos = resultado.pedidos;
+    const stats = {
+      totalPedidos: pedidos.length,
+      pendientes: pedidos.filter(p => p.estadoLogistico === 'Solicitado').length,
+      enPreparacion: pedidos.filter(p => p.estadoLogistico === 'Recibido').length,
+      enCamino: pedidos.filter(p => p.estadoLogistico === 'Enviado').length,
+      entregados: pedidos.filter(p => p.estadoLogistico === 'Entregado').length,
+      cancelados: pedidos.filter(p => p.estadoCierre === 'Cancelado').length,
+      ventasTotal: pedidos.filter(p => p.estadoCierre !== 'Cancelado').reduce((sum, p) => sum + p.total, 0),
+      ventasCerradas: pedidos.filter(p => p.estadoCierre === 'Cerrado').reduce((sum, p) => sum + p.total, 0)
+    };
+    return { success: true, estadisticas: stats };
+  } catch (error) {
+    Logger.log('Error en obtenerEstadisticasDashboard: ' + error.toString());
+    return { success: false, message: 'Error al obtener estadísticas: ' + error.toString() };
+  }
+}
+
+function exportarPedidosCSV(filtros) {
+  try {
+    const resultado = obtenerPedidosDashboard(filtros);
+    if (!resultado.success) return { success: false, message: resultado.message };
+    
+    const pedidos = resultado.pedidos;
+    const headers = ['ID Pedido', 'Fecha', 'Cliente', 'Email', 'Teléfono', 'Estado Logístico', 'Tipo Entrega', 'Dirección', 'Subtotal', 'Descuento', 'Total', 'Método Pago', 'Estado Cierre', 'Notas'];
+    let csv = headers.join(',') + '\n';
+    
+    pedidos.forEach(p => {
+      const fecha = new Date(p.fechaPedido);
+      const fechaFormateada = fecha.toLocaleDateString('es-CO') + ' ' + fecha.toLocaleTimeString('es-CO');
+      const row = [p.idPedido, fechaFormateada, '"' + (p.nombreCliente || '').replace(/"/g, '""') + '"', p.emailCliente || '', p.telefonoCliente || p.telefonoContacto || '', p.estadoLogistico, p.tipoEntrega, '"' + (p.direccionEntrega || '').replace(/"/g, '""') + '"', p.subtotal, p.descuento, p.total, p.metodoPago, p.estadoCierre, '"' + (p.notas || '').replace(/"/g, '""') + '"'];
+      csv += row.join(',') + '\n';
+    });
+    
+    return { success: true, csv: csv, filename: 'pedidos_' + new Date().toISOString().split('T')[0] + '.csv' };
+  } catch (error) {
+    Logger.log('Error en exportarPedidosCSV: ' + error.toString());
+    return { success: false, message: 'Error al exportar: ' + error.toString() };
+  }
+}
+
+// ============================================
+// MIGRACIÓN DE ESTRUCTURA (EJECUTAR UNA VEZ)
+// ============================================
+function migrarEstructuraPedidos() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(60000);
+    Logger.log('INICIANDO MIGRACIÓN DE ESTRUCTURA');
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    if (!sheet) return { success: false, message: 'Hoja de Pedidos no encontrada' };
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    
+    if (headers.length >= 16 && String(headers[3]).toLowerCase().includes('fecha')) {
+      Logger.log('La estructura ya está actualizada');
+      return { success: true, message: 'La estructura ya está actualizada' };
+    }
+    
+    sheet.insertColumnAfter(3);
+    sheet.getRange(1, 3).setValue('Marca_Tiempo');
+    sheet.getRange(1, 4).setValue('Fecha');
+    
+    for (let i = 2; i <= data.length; i++) {
+      const timestamp = sheet.getRange(i, 3).getValue();
+      if (timestamp instanceof Date) {
+        const fechaSolo = Utilities.formatDate(timestamp, 'America/Bogota', 'dd/MM/yyyy');
+        sheet.getRange(i, 4).setValue(fechaSolo);
+      } else if (timestamp) {
+        try {
+          const fecha = new Date(timestamp);
+          const fechaSolo = Utilities.formatDate(fecha, 'America/Bogota', 'dd/MM/yyyy');
+          sheet.getRange(i, 4).setValue(fechaSolo);
+        } catch (e) {
+          sheet.getRange(i, 4).setValue('');
+        }
+      }
+    }
+    
+    sheet.getRange(2, 4, data.length - 1, 1).setNumberFormat('dd/MM/yyyy');
+    Logger.log('✅ Migración completada exitosamente');
+    return { success: true, message: 'Migración completada. Se agregó la columna Fecha y se actualizaron ' + (data.length - 1) + ' registros.' };
+  } catch (error) {
+    Logger.log('❌ Error en migración: ' + error.toString());
+    return { success: false, message: 'Error en migración: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================
+// FUNCIÓN DE TEST PARA VALIDAR CORRECCIÓN
+// ============================================
+function testFiltroFechaColombia() {
+  Logger.log('========================================');
+  Logger.log('TEST: Filtro de Fecha Colombia');
+  Logger.log('========================================');
+  
+  const hoy = new Date();
+  const fechaHoyColombia = Utilities.formatDate(hoy, "America/Bogota", "yyyy-MM-dd");
+  Logger.log('Fecha hoy Colombia (YYYY-MM-DD): ' + fechaHoyColombia);
+  
+  const pruebas = [new Date(), '08/01/2026', '2026-01-08', '2026-01-08T15:30:00.000Z'];
+  Logger.log('\n--- Pruebas de normalización ---');
+  pruebas.forEach(function(prueba, i) {
+    const resultado = normalizarFechaAString(prueba);
+    Logger.log('Entrada ' + i + ': ' + prueba + ' -> Salida: ' + resultado);
+  });
+  
+  Logger.log('\n--- Prueba de filtro con fecha de hoy ---');
+  const resultado = obtenerPedidosDashboard({ fecha: fechaHoyColombia });
+  Logger.log('Pedidos encontrados para ' + fechaHoyColombia + ': ' + resultado.pedidos.length);
+  
+  if (resultado.pedidos.length > 0) {
+    Logger.log('Primer pedido: ' + resultado.pedidos[0].idPedido);
+  }
+  
+  return { fechaHoy: fechaHoyColombia, pedidosEncontrados: resultado.pedidos.length, exito: resultado.success };
+}
+
+// ============================================
+// PANEL DE MESEROS - FUNCIONES
+// ============================================
+function validarPinMesero(pin) {
+  try {
+    Logger.log('🔐 Validando PIN: ' + pin);
+    
+    if (!pin || String(pin).length !== 4) {
+      return { success: false, message: 'PIN debe tener 4 dígitos' };
+    }
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+    
+    if (!sheet) {
+      Logger.log('❌ Hoja USUARIOS no encontrada');
+      return { success: false, message: 'Error de configuración' };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const pinStr = String(pin).trim();
+    const pinNum = parseInt(pin, 10);
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const pinUsuario = row[10];
+      const activo = row[8];
+      const rol = String(row[7] || '').trim();
+      
+      let pinCoincide = false;
+      if (pinUsuario !== null && pinUsuario !== undefined && pinUsuario !== '') {
+        const pinUsuarioStr = String(pinUsuario).trim();
+        const pinUsuarioNum = parseInt(pinUsuario, 10);
+        pinCoincide = (pinUsuarioStr === pinStr) || (pinUsuarioNum === pinNum);
+      }
+      
+      if (pinCoincide && activo === true) {
+        const rolesPermitidos = ['Administrador', 'Admin', 'Mesero', 'Cocina', 'Cajero', 'Domiciliario'];
+        const esRolPermitido = rolesPermitidos.some(r => r.toLowerCase() === rol.toLowerCase());
+        
+        if (!esRolPermitido) {
+          continue;
+        }
+        
+        Logger.log('✅ PIN válido - Usuario: ' + row[3] + ' | Rol: ' + rol);
+        
+        return {
+          success: true,
+          usuario: {
+            id: String(row[0]).trim(),
+            nombre: row[3] || 'Usuario',
+            email: row[1] || '',
+            telefono: row[4] || '',
+            rol: rol,
+            esAdmin: ['Administrador', 'Admin'].some(r => r.toLowerCase() === rol.toLowerCase())
+          }
+        };
+      }
+    }
+    
+    Logger.log('❌ PIN no encontrado');
+    return { success: false, message: 'PIN inválido' };
+    
+  } catch (error) {
+    Logger.log('❌ Error: ' + error.toString());
+    return { success: false, message: 'Error: ' + error.toString() };
+  }
+}
+
+function obtenerDatosInicialesMeseros() {
+  try {
+    Logger.log('📊 Cargando datos Panel Meseros');
+    
+    const mesasResult = obtenerMesasPanel();
+    const configResult = obtenerConfiguracion();
+    const categoriasResult = obtenerCategorias();
+    const productosResult = obtenerProductos('TODOS');
+    
+    return {
+      success: true,
+      mesas: mesasResult.success ? mesasResult.mesas : [],
+      config: configResult.success ? configResult.config : {},
+      categorias: categoriasResult.success ? categoriasResult.categorias : [],
+      productos: productosResult.success ? productosResult.productos : [],
+      timestamp: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    Logger.log('❌ Error: ' + error.toString());
+    return { success: false, message: error.toString(), mesas: [], config: {}, categorias: [], productos: [] };
+  }
+}
+
+function obtenerMesasPanel() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    let sheet = ss.getSheetByName('Mesas');
+    
+    if (!sheet) {
+      Logger.log('⚠️ Hoja Mesas no existe, creando...');
+      return crearTablaMesasConDatos();
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) {
+      Logger.log('⚠️ Hoja Mesas vacía, agregando datos...');
+      return agregarDatosMesasExistente(sheet);
+    }
+    
+    const mesas = [];
+    
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const activo = row[8];
+      
+      const esActivo = activo === true || activo === '' || activo === null || 
+                       activo === undefined || String(activo).toUpperCase() === 'TRUE' ||
+                       String(activo).toUpperCase() === 'SI' || String(activo).toUpperCase() === 'SÍ';
+      
+      if (esActivo && row[0]) {
+        let totalConsumo = 0;
+        const idPedidoActivo = String(row[5] || '').trim();
+        
+        if (idPedidoActivo && idPedidoActivo !== '') {
+          totalConsumo = obtenerTotalPedidoMesa(idPedidoActivo);
+        }
+        
+        mesas.push({
+          id: String(row[0]).trim(),
+          nombre: String(row[1] || 'Mesa').trim(),
+          capacidad: Number(row[2]) || 4,
+          ubicacion: String(row[3] || 'Principal').trim(),
+          estado: String(row[4] || 'Libre').trim(),
+          idPedidoActivo: idPedidoActivo,
+          meseroAsignado: String(row[6] || '').trim(),
+          horaOcupacion: row[7] ? new Date(row[7]).toISOString() : null,
+          totalConsumo: totalConsumo
+        });
+      }
+    }
+    
+    Logger.log('✅ Mesas cargadas: ' + mesas.length);
+    return { success: true, mesas: mesas };
+    
+  } catch (error) {
+    Logger.log('❌ Error en obtenerMesasPanel: ' + error.toString());
+    return { success: false, mesas: [], message: error.toString() };
+  }
+}
+
+function crearTablaMesasConDatos() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.insertSheet('Mesas');
+    
+    const headers = ['ID_Mesas', 'Nombre', 'Capacidad', 'Ubicacion', 'Estado', 'ID_Pedido_Activo', 'Mesero_Asignado', 'Hora_Ocupacion', 'Activo'];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    
+    const mesasData = [
+      ['M01', 'Mesa 1', 4, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M02', 'Mesa 2', 4, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M03', 'Mesa 3', 2, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M04', 'Mesa 4', 6, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M05', 'Mesa 5', 4, 'Terraza', 'Libre', '', '', '', true],
+      ['M06', 'Mesa 6', 4, 'Terraza', 'Libre', '', '', '', true],
+      ['M07', 'Mesa 7', 8, 'Salón VIP', 'Libre', '', '', '', true],
+      ['M08', 'Mesa 8', 2, 'Barra', 'Libre', '', '', '', true]
+    ];
+    
+    sheet.getRange(2, 1, mesasData.length, 9).setValues(mesasData);
+    
+    Logger.log('✅ Tabla Mesas creada con ' + mesasData.length + ' mesas');
+    
+    const mesas = mesasData.map(m => ({
+      id: m[0], nombre: m[1], capacidad: m[2], ubicacion: m[3], 
+      estado: m[4], idPedidoActivo: '', meseroAsignado: '', horaOcupacion: null, totalConsumo: 0
+    }));
+    
+    return { success: true, mesas: mesas };
+  } catch (error) {
+    Logger.log('❌ Error creando tabla Mesas: ' + error.toString());
+    return { success: false, mesas: [], message: error.toString() };
+  }
+}
+
+function agregarDatosMesasExistente(sheet) {
+  try {
+    const mesasData = [
+      ['M01', 'Mesa 1', 4, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M02', 'Mesa 2', 4, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M03', 'Mesa 3', 2, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M04', 'Mesa 4', 6, 'Salón Principal', 'Libre', '', '', '', true],
+      ['M05', 'Mesa 5', 4, 'Terraza', 'Libre', '', '', '', true],
+      ['M06', 'Mesa 6', 4, 'Terraza', 'Libre', '', '', '', true],
+      ['M07', 'Mesa 7', 8, 'Salón VIP', 'Libre', '', '', '', true],
+      ['M08', 'Mesa 8', 2, 'Barra', 'Libre', '', '', '', true]
+    ];
+    
+    sheet.getRange(2, 1, mesasData.length, 9).setValues(mesasData);
+    
+    Logger.log('✅ Datos de mesas agregados: ' + mesasData.length);
+    
+    const mesas = mesasData.map(m => ({
+      id: m[0], nombre: m[1], capacidad: m[2], ubicacion: m[3], 
+      estado: m[4], idPedidoActivo: '', meseroAsignado: '', horaOcupacion: null, totalConsumo: 0
+    }));
+    
+    return { success: true, mesas: mesas };
+  } catch (error) {
+    Logger.log('❌ Error agregando datos a Mesas: ' + error.toString());
+    return { success: false, mesas: [], message: error.toString() };
+  }
+}
+
+function forzarCreacionMesas() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    let sheet = ss.getSheetByName('Mesas');
+    
+    if (sheet) {
+      ss.deleteSheet(sheet);
+      Logger.log('Hoja Mesas eliminada para recrear');
+    }
+    
+    return crearTablaMesasConDatos();
+  } catch (error) {
+    Logger.log('❌ Error: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function obtenerTotalPedidoMesa(idPedido) {
+  try {
+    if (!idPedido) return 0;
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    if (!sheet) return 0;
+    
+    const data = sheet.getDataRange().getValues();
+    const idStr = String(idPedido).trim().toUpperCase();
+    
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim().toUpperCase() === idStr) {
+        return Number(data[i][10]) || 0;
+      }
+    }
+    return 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function abrirMesa(idMesa, datos) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    Logger.log('🔑 Abriendo mesa: ' + idMesa);
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetMesas = ss.getSheetByName('Mesas');
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    
+    if (!sheetMesas || !sheetPedidos) {
+      return { success: false, message: 'Hojas no encontradas' };
+    }
+    
+    const dataMesas = sheetMesas.getDataRange().getValues();
+    const idMesaStr = String(idMesa).trim().toUpperCase();
+    let filaEncontrada = -1;
+    
+    for (let i = 1; i < dataMesas.length; i++) {
+      if (String(dataMesas[i][0]).trim().toUpperCase() === idMesaStr) {
+        filaEncontrada = i + 1;
+        const estadoActual = String(dataMesas[i][4] || '').trim();
+        if (estadoActual !== 'Libre') {
+          return { success: false, message: 'Mesa no disponible: ' + estadoActual };
+        }
+        break;
+      }
+    }
+    
+    if (filaEncontrada === -1) {
+      return { success: false, message: 'Mesa no encontrada' };
+    }
+    
+    const idClienteNormalizado = obtenerOCrearClienteGenerico();
+    
+    const lastRow = sheetPedidos.getLastRow();
+    const idPedido = 'PED' + String(lastRow).padStart(6, '0');
+    const timestamp = obtenerTimestampColombia();
+    const fechaSolo = obtenerFechaColombia(timestamp);
+    
+    const rowPedido = [
+      idPedido, idClienteNormalizado, timestamp, fechaSolo, 'Solicitado',
+      'Mesa', '', '', 0, 0, 0, '', datos.notas || '', 'Abierto', '',
+      datos.meseroId || '', 'Panel Meseros', idMesa, datos.meseroId || '',
+      datos.comensales || 1
+    ];
+    
+    sheetPedidos.appendRow(rowPedido);
+    
+    sheetMesas.getRange(filaEncontrada, 5).setValue('Ocupada');
+    sheetMesas.getRange(filaEncontrada, 6).setValue(idPedido);
+    sheetMesas.getRange(filaEncontrada, 7).setValue(datos.meseroId || '');
+    sheetMesas.getRange(filaEncontrada, 8).setValue(timestamp);
+    
+    registrarCambioEstado(idPedido, idClienteNormalizado, datos.meseroId, datos.meseroNombre || 'Mesero', 'Mesero', 'N/A', 'Solicitado', 'Mesa ' + idMesa + ' abierta');
+    
+    return { success: true, idPedido: idPedido };
+    
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function cerrarMesa(idMesa, datosCierre) {
+  var idPedidoActivo = '';
+  var filaEncontrada = -1;
+  var estadoAnteriorPedido = '';
+  var idClientePedido = '';
+  
+  try {
+    Logger.log('========================================');
+    Logger.log('CERRAR MESA V18 FINAL - Inicio');
+    Logger.log('Mesa: ' + idMesa);
+    Logger.log('Timestamp: ' + new Date().toISOString());
+    Logger.log('========================================');
+    
+    if (!idMesa) {
+      Logger.log('ERROR: ID de mesa no proporcionado');
+      return { success: false, message: 'ID de mesa requerido' };
+    }
+    
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheetMesas = ss.getSheetByName('Mesas');
+    var sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    
+    if (!sheetMesas) {
+      Logger.log('ERROR: Hoja Mesas no encontrada');
+      return { success: false, message: 'Hoja Mesas no encontrada' };
+    }
+    
+    if (!sheetPedidos) {
+      Logger.log('ERROR: Hoja Pedidos no encontrada');
+      return { success: false, message: 'Hoja Pedidos no encontrada' };
+    }
+    
+    var dataMesas = sheetMesas.getDataRange().getValues();
+    var idMesaStr = String(idMesa).trim().toUpperCase();
+    
+    for (var i = 1; i < dataMesas.length; i++) {
+      if (String(dataMesas[i][0]).trim().toUpperCase() === idMesaStr) {
+        filaEncontrada = i + 1;
+        idPedidoActivo = String(dataMesas[i][5] || '').trim();
+        Logger.log('Mesa encontrada - Fila: ' + filaEncontrada + ', Pedido: ' + (idPedidoActivo || 'NINGUNO'));
+        break;
+      }
+    }
+    
+    if (filaEncontrada === -1) {
+      Logger.log('ERROR: Mesa no encontrada: ' + idMesaStr);
+      return { success: false, message: 'Mesa no encontrada' };
+    }
+    
+    if (!idPedidoActivo || idPedidoActivo === '') {
+      Logger.log('Mesa sin pedido activo - Liberando directamente');
+      
+      sheetMesas.getRange(filaEncontrada, 5).setValue('Libre');
+      sheetMesas.getRange(filaEncontrada, 6).setValue('');
+      sheetMesas.getRange(filaEncontrada, 7).setValue('');
+      sheetMesas.getRange(filaEncontrada, 8).setValue('');
+      SpreadsheetApp.flush();
+      
+      Logger.log('Mesa liberada (sin pedido)');
+      return { 
+        success: true, 
+        idPedido: null, 
+        message: 'Mesa liberada correctamente'
+      };
+    }
+    
+    var dataPedidos = sheetPedidos.getDataRange().getValues();
+    var idPedidoStr = idPedidoActivo.toUpperCase();
+    var filaPedido = -1;
+    var estadoLogisticoActual = '';
+    var estadoCierreActual = '';
+    
+    for (var j = 1; j < dataPedidos.length; j++) {
+      if (String(dataPedidos[j][0]).trim().toUpperCase() === idPedidoStr) {
+        filaPedido = j + 1;
+        idClientePedido = String(dataPedidos[j][1] || '');
+        estadoLogisticoActual = String(dataPedidos[j][4] || '').trim();
+        estadoCierreActual = String(dataPedidos[j][13] || '').trim();
+        estadoAnteriorPedido = estadoLogisticoActual;
+        Logger.log('Pedido encontrado - Fila: ' + filaPedido);
+        Logger.log('Estado actual: ' + estadoLogisticoActual + ' / ' + estadoCierreActual);
+        break;
+      }
+    }
+    
+    if (filaPedido === -1) {
+      Logger.log('Pedido no encontrado - Liberando mesa');
+      
+      sheetMesas.getRange(filaEncontrada, 5).setValue('Libre');
+      sheetMesas.getRange(filaEncontrada, 6).setValue('');
+      sheetMesas.getRange(filaEncontrada, 7).setValue('');
+      sheetMesas.getRange(filaEncontrada, 8).setValue('');
+      SpreadsheetApp.flush();
+      
+      return { 
+        success: true, 
+        idPedido: idPedidoActivo, 
+        message: 'Mesa liberada (pedido no encontrado)'
+      };
+    }
+    
+    var yaEstaCerrado = (estadoCierreActual.toLowerCase() === 'cerrado' || 
+                         estadoCierreActual.toLowerCase() === 'cancelado');
+    var yaEstaEntregado = (estadoLogisticoActual.toLowerCase() === 'entregado');
+    
+    if (yaEstaCerrado || yaEstaEntregado) {
+      Logger.log('Pedido ya procesado - Solo liberando mesa');
+      
+      sheetMesas.getRange(filaEncontrada, 5).setValue('Libre');
+      sheetMesas.getRange(filaEncontrada, 6).setValue('');
+      sheetMesas.getRange(filaEncontrada, 7).setValue('');
+      sheetMesas.getRange(filaEncontrada, 8).setValue('');
+      SpreadsheetApp.flush();
+      
+      Logger.log('Mesa liberada (pedido ya estaba cerrado)');
+      return { 
+        success: true, 
+        idPedido: idPedidoActivo, 
+        message: 'Mesa cerrada correctamente'
+      };
+    }
+    
+    var metodoPago = (datosCierre && datosCierre.metodoPago) ? datosCierre.metodoPago : 'Efectivo';
+    
+    Logger.log('Actualizando pedido...');
+    
+    sheetPedidos.getRange(filaPedido, 5).setValue('Entregado');
+    sheetPedidos.getRange(filaPedido, 12).setValue(metodoPago);
+    sheetPedidos.getRange(filaPedido, 14).setValue('Cerrado');
+    
+    Logger.log('Pedido actualizado: Entregado, ' + metodoPago + ', Cerrado');
+    
+    Logger.log('Liberando mesa...');
+    
+    sheetMesas.getRange(filaEncontrada, 5).setValue('Libre');
+    sheetMesas.getRange(filaEncontrada, 6).setValue('');
+    sheetMesas.getRange(filaEncontrada, 7).setValue('');
+    sheetMesas.getRange(filaEncontrada, 8).setValue('');
+    
+    SpreadsheetApp.flush();
+    
+    Logger.log('Mesa liberada correctamente');
+    
+    try {
+      registrarCambioEstadoSinLock(
+        idPedidoActivo, 
+        idClientePedido || 'MESA-' + idMesa, 
+        (datosCierre && datosCierre.meseroId) ? datosCierre.meseroId : '',
+        (datosCierre && datosCierre.meseroNombre) ? datosCierre.meseroNombre : 'Mesero',
+        'Mesero',
+        estadoAnteriorPedido || 'Ocupada',
+        'Entregado',
+        'Mesa ' + idMesa + ' cerrada - Pago: ' + metodoPago
+      );
+    } catch (logError) {
+      Logger.log('Advertencia historial: ' + logError.toString());
+    }
+    
+    Logger.log('========================================');
+    Logger.log('CERRAR MESA V18 - EXITO');
+    Logger.log('Mesa: ' + idMesa + ' | Pedido: ' + idPedidoActivo);
+    Logger.log('========================================');
+    
+    return { 
+      success: true, 
+      idPedido: idPedidoActivo, 
+      message: 'Mesa cerrada correctamente'
+    };
+    
+  } catch (error) {
+    Logger.log('========================================');
+    Logger.log('ERROR CRITICO en cerrarMesa');
+    Logger.log('Error: ' + error.toString());
+    Logger.log('========================================');
+    
+    try {
+      if (filaEncontrada > 0) {
+        var ssRecovery = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+        var sheetRecovery = ssRecovery.getSheetByName('Mesas');
+        if (sheetRecovery) {
+          sheetRecovery.getRange(filaEncontrada, 5).setValue('Libre');
+          sheetRecovery.getRange(filaEncontrada, 6).setValue('');
+          sheetRecovery.getRange(filaEncontrada, 7).setValue('');
+          sheetRecovery.getRange(filaEncontrada, 8).setValue('');
+          SpreadsheetApp.flush();
+          Logger.log('Mesa liberada en recuperacion');
+        }
+      }
+    } catch (e) {
+      Logger.log('Error en recuperacion: ' + e.toString());
+    }
+    
+    return { 
+      success: false, 
+      message: 'Error: ' + error.toString()
+    };
+  }
+}
+
+function registrarCambioEstadoSinLock(idPedido, idCliente, idUsuario, nombreUsuario, rol, estadoAnterior, estadoNuevo, notas) {
+  try {
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEETS.PROCESO_DELIVERY);
+    
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEETS.PROCESO_DELIVERY);
+      var headers = ['ID_Delivery', 'ID_Pedido', 'Cliente_ID', 'Usuario_Cambio', 'Nombre_Usuario', 'Area_Rol', 'Estado_Anterior', 'Estado_Nuevo', 'Fecha_Hora', 'Notas'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.setFrozenRows(1);
+    }
+    
+    var lastRow = sheet.getLastRow();
+    var idDelivery = 'DEL' + String(lastRow).padStart(6, '0');
+    var timestamp = obtenerTimestampColombia();
+    
+    var newRow = [
+      idDelivery, 
+      idPedido, 
+      idCliente, 
+      idUsuario, 
+      nombreUsuario || 'Sistema', 
+      rol || 'Sistema', 
+      estadoAnterior || 'N/A', 
+      estadoNuevo, 
+      timestamp, 
+      notas || ''
+    ];
+    
+    sheet.appendRow(newRow);
+    SpreadsheetApp.flush();
+    
+    Logger.log('Historial registrado: ' + idDelivery);
+    return { success: true, idDelivery: idDelivery };
+    
+  } catch (error) {
+    Logger.log('Error en historial (no critico): ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function cancelarPedidoBackend(idPedido, motivo, idMesa, datosUsuario) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    Logger.log('🚫 Cancelando pedido: ' + idPedido);
+    
+    if (!idPedido) return { success: false, message: 'ID de pedido no proporcionado' };
+    if (!motivo || motivo.trim() === '') return { success: false, message: 'Debe proporcionar un motivo' };
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const sheetMesas = ss.getSheetByName('Mesas');
+    
+    if (!sheetPedidos) return { success: false, message: 'Hoja de Pedidos no encontrada' };
+    
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    let filaPedido = -1;
+    let idCliente = '';
+    let estadoActual = '';
+    
+    for (let i = 1; i < dataPedidos.length; i++) {
+      if (String(dataPedidos[i][0]).trim().toUpperCase() === idPedidoStr) {
+        filaPedido = i + 1;
+        idCliente = String(dataPedidos[i][1]);
+        estadoActual = String(dataPedidos[i][4] || 'Solicitado');
+        break;
+      }
+    }
+    
+    if (filaPedido === -1) return { success: false, message: 'Pedido no encontrado' };
+    if (estadoActual === 'Entregado') return { success: false, message: 'No se puede cancelar pedido entregado' };
+    
+    sheetPedidos.getRange(filaPedido, 5).setValue('Entregado');
+    sheetPedidos.getRange(filaPedido, 14).setValue('Cancelado');
+    sheetPedidos.getRange(filaPedido, 15).setValue(motivo);
+    
+    if (idMesa && sheetMesas) {
+      const dataMesas = sheetMesas.getDataRange().getValues();
+      const idMesaStr = String(idMesa).trim().toUpperCase();
+      
+      for (let i = 1; i < dataMesas.length; i++) {
+        if (String(dataMesas[i][0]).trim().toUpperCase() === idMesaStr) {
+          const filaMesa = i + 1;
+          sheetMesas.getRange(filaMesa, 5).setValue('Libre');
+          sheetMesas.getRange(filaMesa, 6).setValue('');
+          sheetMesas.getRange(filaMesa, 7).setValue('');
+          sheetMesas.getRange(filaMesa, 8).setValue('');
+          break;
+        }
+      }
+    }
+    
+    const usuarioId = datosUsuario && datosUsuario.id ? datosUsuario.id : 'SISTEMA';
+    const usuarioNombre = datosUsuario && datosUsuario.nombre ? datosUsuario.nombre : 'Sistema';
+    
+    registrarCambioEstado(idPedido, idCliente, usuarioId, usuarioNombre, 'Mesero', estadoActual, 'Cancelado', 'CANCELADO: ' + motivo);
+    
+    return { success: true, message: 'Pedido cancelado', idPedido: idPedido };
+    
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function agregarItemsPedido(idPedido, items, datosUsuario) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    Logger.log('🛒 Agregando items: ' + idPedido);
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
+    
+    if (!sheetPedidos || !sheetDetalle) return { success: false, message: 'Hojas no encontradas' };
+    
+    const dataPedidos = sheetPedidos.getDataRange().getValues();
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    let filaPedido = -1;
+    let idCliente = '';
+    let subtotalActual = 0;
+    
+    for (let i = 1; i < dataPedidos.length; i++) {
+      if (String(dataPedidos[i][0]).trim().toUpperCase() === idPedidoStr) {
+        filaPedido = i + 1;
+        idCliente = String(dataPedidos[i][1]);
+        subtotalActual = Number(dataPedidos[i][8]) || 0;
+        break;
+      }
+    }
+    
+    if (filaPedido === -1) return { success: false, message: 'Pedido no encontrado' };
+    
+    const dataDetalle = sheetDetalle.getDataRange().getValues();
+    let ultimoNumero = 0;
+    for (let i = 1; i < dataDetalle.length; i++) {
+      if (String(dataDetalle[i][1]).trim().toUpperCase() === idPedidoStr) {
+        const partes = String(dataDetalle[i][0]).split('-');
+        if (partes.length > 1) {
+          const num = parseInt(partes[1], 10);
+          if (num > ultimoNumero) ultimoNumero = num;
+        }
+      }
+    }
+    
+    let nuevoSubtotal = 0;
+    items.forEach(function(item, index) {
+      const idDetalle = idPedido + '-' + String(ultimoNumero + index + 1).padStart(3, '0');
+      const subtotalItem = ((item.precioUnitario || 0) + (item.precioAdiciones || 0)) * (item.cantidad || 1);
+      
+      sheetDetalle.appendRow([
+        idDetalle, idPedido, idCliente, item.idProducto, item.cantidad || 1,
+        item.precioUnitario || 0, item.adiciones || '', item.precioAdiciones || 0, subtotalItem
+      ]);
+      nuevoSubtotal += subtotalItem;
+    });
+    
+    const subtotalFinal = subtotalActual + nuevoSubtotal;
+    sheetPedidos.getRange(filaPedido, 9).setValue(subtotalFinal);
+    sheetPedidos.getRange(filaPedido, 11).setValue(subtotalFinal);
+    
+    Logger.log('✅ Items agregados. Total: ' + subtotalFinal);
+    return { success: true, subtotal: subtotalFinal, total: subtotalFinal };
+    
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function obtenerItemsPedidoMesero(idPedido) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetDetalle = ss.getSheetByName(CONFIG.SHEETS.DETALLE_PEDIDOS);
+    const sheetProductos = ss.getSheetByName(CONFIG.SHEETS.PRODUCTOS);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+
+    if (!sheetDetalle || !sheetProductos) return { success: false, items: [] };
+
+    const dataDetalle = sheetDetalle.getDataRange().getValues();
+    const dataProductos = sheetProductos.getDataRange().getValues();
+
+    var productosMap = {};
+    for (var i = 1; i < dataProductos.length; i++) {
+      productosMap[String(dataProductos[i][0]).trim().toUpperCase()] = {
+        nombre: dataProductos[i][2],
+        precio: dataProductos[i][4]
+      };
+    }
+
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    const items = [];
+
+    for (var j = 1; j < dataDetalle.length; j++) {
+      if (String(dataDetalle[j][1]).trim().toUpperCase() === idPedidoStr) {
+        const idProducto = String(dataDetalle[j][3]).trim().toUpperCase();
+        const producto = productosMap[idProducto] || { nombre: 'Producto', precio: 0 };
+
+        items.push({
+          idDetalle: String(dataDetalle[j][0]),
+          idProducto: String(dataDetalle[j][3]),
+          nombreProducto: producto.nombre,
+          cantidad: Number(dataDetalle[j][4]) || 1,
+          precioUnitario: Number(dataDetalle[j][5]) || 0,
+          adiciones: String(dataDetalle[j][6] || ''),
+          precioAdiciones: Number(dataDetalle[j][7]) || 0,
+          subtotalItem: Number(dataDetalle[j][8]) || 0
+        });
+      }
+    }
+
+    // V18.3 FIX: Obtener estadoLogistico del pedido para el badge de cocina
+    var estadoPedido = 'Solicitado';
+    if (sheetPedidos) {
+      var dataPedidos = sheetPedidos.getDataRange().getValues();
+      var headers = dataPedidos[0] || [];
+      var tieneNuevaEstructura = headers.length >= 16;
+      var colEstado = tieneNuevaEstructura ? 4 : 3; // Columna del estadoLogistico
+
+      for (var k = 1; k < dataPedidos.length; k++) {
+        if (String(dataPedidos[k][0]).trim().toUpperCase() === idPedidoStr) {
+          estadoPedido = String(dataPedidos[k][colEstado] || 'Solicitado').trim();
+          break;
+        }
+      }
+    }
+
+    return { success: true, items: items, estado: estadoPedido };
+  } catch (error) {
+    return { success: false, items: [], estado: 'Solicitado' };
+  }
+}
+
+function buscarClientePorCelular(celular) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName('Clientes');
+    
+    if (!sheet) {
+      return { encontrado: false };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const celularStr = String(celular || '').trim();
+    
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][2]).trim() === celularStr) {
+        return {
+          encontrado: true,
+          id: data[i][0],
+          nombre: data[i][1] || '',
+          celular: data[i][2] || '',
+          direccion: data[i][3] || '',
+          notas: data[i][4] || ''
+        };
+      }
+    }
+    
+    return { encontrado: false };
+  } catch (error) {
+    return { encontrado: false };
+  }
+}
+
+function buscarClienteDomicilio(termino) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName('Clientes');
+    if (!sheet) return { success: true, clientes: [] };
+    
+    const data = sheet.getDataRange().getValues();
+    const terminoLower = String(termino || '').toLowerCase().trim();
+    const clientes = [];
+    
+    for (var i = 1; i < data.length; i++) {
+      const nombre = String(data[i][1] || '').toLowerCase();
+      const celular = String(data[i][2] || '');
+      
+      if (nombre.indexOf(terminoLower) !== -1 || celular.indexOf(termino) !== -1) {
+        clientes.push({
+          id: String(data[i][0]),
+          nombre: data[i][1] || '',
+          celular: data[i][2] || '',
+          direccion: data[i][3] || '',
+          notas: data[i][4] || ''
+        });
+      }
+    }
+    
+    return { success: true, clientes: clientes };
+  } catch (error) {
+    return { success: false, clientes: [] };
+  }
+}
+
+function guardarClienteDomicilio(datos) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName('Clientes');
+    
+    if (!sheet) {
+      sheet = ss.insertSheet('Clientes');
+      sheet.getRange(1, 1, 1, 6).setValues([['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro']]);
+      sheet.setFrozenRows(1);
+    }
+    
+    const celular = String(datos.celular || '').trim();
+    if (!celular) return;
+    
+    const data = sheet.getDataRange().getValues();
+    
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][2]).trim() === celular) {
+        var fila = i + 1;
+        if (datos.nombre) sheet.getRange(fila, 2).setValue(datos.nombre);
+        if (datos.direccion) sheet.getRange(fila, 4).setValue(datos.direccion);
+        if (datos.notas) sheet.getRange(fila, 5).setValue(datos.notas);
+        return;
+      }
+    }
+    
+    var idCliente = 'CLI-DOM-' + String(sheet.getLastRow()).padStart(4, '0');
+    sheet.appendRow([idCliente, datos.nombre || '', celular, datos.direccion || '', datos.notas || '', obtenerTimestampColombia()]);
+    
+  } catch (error) {
+    Logger.log('Error guardando cliente: ' + error.toString());
+  }
+}
+
+function crearPedidoDomicilio(datosCliente, datosUsuario) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    
+    guardarClienteDomicilio(datosCliente);
+    
+    const celularLimpio = String(datosCliente.celular || '').replace(/\D/g, '').trim();
+    const idClienteNormalizado = celularLimpio || obtenerOCrearClienteGenerico();
+    
+    const timestamp = obtenerTimestampColombia();
+    const fechaSolo = obtenerFechaColombia(timestamp);
+    const lastRow = sheetPedidos.getLastRow();
+    const idPedido = 'PED' + String(lastRow).padStart(6, '0');
+    
+    sheetPedidos.appendRow([
+      idPedido, idClienteNormalizado, timestamp, fechaSolo, 'Solicitado',
+      'Domicilio', datosCliente.direccion || '', datosCliente.celular || '',
+      0, 0, 0, '', datosCliente.notas || '', 'Abierto', '',
+      datosUsuario.id || '', 'Panel Meseros', '', datosUsuario.id || '', ''
+    ]);
+    
+    registrarCambioEstado(idPedido, idClienteNormalizado, datosUsuario.id || '', datosUsuario.nombre || 'Mesero', 'Mesero', 'N/A', 'Solicitado', 'Domicilio: ' + datosCliente.nombre);
+    
+    return { success: true, idPedido: idPedido, idCliente: idClienteNormalizado };
+    
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function crearPedidoRapido(datosUsuario) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    
+    const idClienteNormalizado = obtenerOCrearClienteGenerico();
+    
+    const timestamp = obtenerTimestampColombia();
+    const fechaSolo = obtenerFechaColombia(timestamp);
+    const lastRow = sheetPedidos.getLastRow();
+    const idPedido = 'PED' + String(lastRow).padStart(6, '0');
+    
+    sheetPedidos.appendRow([
+      idPedido, idClienteNormalizado, timestamp, fechaSolo, 'Solicitado',
+      'Recoger en tienda', '', '', 0, 0, 0, '', '', 'Abierto', '',
+      datosUsuario.id || '', 'Panel Meseros', '', datosUsuario.id || '', ''
+    ]);
+    
+    registrarCambioEstado(idPedido, idClienteNormalizado, datosUsuario.id || '', datosUsuario.nombre || 'Mesero', 'Mesero', 'N/A', 'Solicitado', 'Pedido rápido');
+    
+    return { success: true, idPedido: idPedido, idCliente: idClienteNormalizado };
+    
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function finalizarPedido(idPedido, datosCierre) {
+  try {
+    Logger.log('========================================');
+    Logger.log('FINALIZAR PEDIDO V18 - Inicio');
+    Logger.log('Pedido: ' + idPedido);
+    Logger.log('========================================');
+    
+    if (!idPedido) {
+      return { success: false, message: 'ID de pedido requerido' };
+    }
+    
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    
+    if (!sheetPedidos) {
+      return { success: false, message: 'Hoja Pedidos no encontrada' };
+    }
+    
+    var data = sheetPedidos.getDataRange().getValues();
+    var idPedidoStr = String(idPedido).trim().toUpperCase();
+    var encontrado = false;
+    
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim().toUpperCase() === idPedidoStr) {
+        var fila = i + 1;
+        encontrado = true;
+        
+        var estadoCierre = String(data[i][13] || '').trim().toLowerCase();
+        if (estadoCierre === 'cerrado' || estadoCierre === 'cancelado') {
+          Logger.log('Pedido ya estaba cerrado');
+          return { success: true, message: 'Pedido procesado', yaEstabaCerrado: true };
+        }
+        
+        if (datosCierre && datosCierre.metodoPago) {
+          sheetPedidos.getRange(fila, 12).setValue(datosCierre.metodoPago);
+        }
+        
+        if (datosCierre && datosCierre.cerrar) {
+          sheetPedidos.getRange(fila, 5).setValue('Entregado');
+          sheetPedidos.getRange(fila, 14).setValue('Cerrado');
+        }
+        
+        SpreadsheetApp.flush();
+        Logger.log('Pedido finalizado correctamente');
+        break;
+      }
+    }
+    
+    if (!encontrado) {
+      Logger.log('Pedido no encontrado: ' + idPedidoStr);
+      return { success: false, message: 'Pedido no encontrado' };
+    }
+    
+    return { success: true, message: 'Pedido finalizado' };
+    
+  } catch (error) {
+    Logger.log('Error en finalizarPedido: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function generarMensajeWhatsApp(idPedido) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    const configResult = obtenerConfiguracion();
+    const config = configResult.config || {};
+    
+    const data = sheetPedidos.getDataRange().getValues();
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    var pedido = null;
+    
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim().toUpperCase() === idPedidoStr) {
+        pedido = {
+          id: data[i][0],
+          direccion: data[i][6] || '',
+          telefono: data[i][7] || '',
+          total: data[i][10] || 0,
+          metodoPago: data[i][11] || 'Efectivo'
+        };
+        break;
+      }
+    }
+    
+    if (!pedido) return { success: false, message: 'Pedido no encontrado' };
+    
+    const itemsResult = obtenerItemsPedidoMesero(idPedido);
+    const items = itemsResult.items || [];
+    
+    const moneda = config.moneda || '$';
+    const nombreEmpresa = config.nombreEmpresa || 'CloudPyme';
+    
+    var mensaje = '🏠 *' + nombreEmpresa + '*\n';
+    mensaje += '────────────────────\n';
+    mensaje += '📦 *Pedido:* ' + pedido.id + '\n\n';
+    mensaje += '📋 *Detalle:*\n';
+    
+    items.forEach(function(item) {
+      mensaje += '• ' + item.cantidad + 'x ' + item.nombreProducto;
+      if (item.adiciones) mensaje += ' (+' + item.adiciones + ')';
+      mensaje += ' - ' + moneda + formatearNumero(item.subtotalItem) + '\n';
+    });
+    
+    mensaje += '\n────────────────────\n';
+    mensaje += '💰 *Total:* ' + moneda + formatearNumero(pedido.total) + '\n';
+    mensaje += '💳 *Pago:* ' + pedido.metodoPago + '\n';
+    if (pedido.direccion) {
+      mensaje += '📍 *Dirección:* ' + pedido.direccion + '\n';
+    }
+    mensaje += '\n¡Gracias por tu pedido! 🙏';
+    
+    var telefonoLimpio = String(pedido.telefono).replace(/\D/g, '');
+    var urlWhatsApp = 'https://wa.me/57' + telefonoLimpio + '?text=' + encodeURIComponent(mensaje);
+    
+    return { success: true, mensaje: mensaje, urlWhatsApp: urlWhatsApp, telefono: pedido.telefono };
+    
+  } catch (error) {
+    Logger.log('Error en generarMensajeWhatsApp: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+
+function formatearNumero(num) {
+  return parseFloat(num || 0).toLocaleString('es-CO');
+}
+
+function obtenerOCrearClienteGenerico() {
+  try {
+    const ID_CLIENTE_GENERICO = '2222222';
+    const NOMBRE_CLIENTE_GENERICO = 'CONSUMIDOR FINAL';
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+    
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
+      sheet.getRange(1, 1, 1, 6).setValues([['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro']]);
+      sheet.setFrozenRows(1);
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === ID_CLIENTE_GENERICO) {
+        return ID_CLIENTE_GENERICO;
+      }
+    }
+    
+    const timestamp = obtenerTimestampColombia();
+    sheet.appendRow([ID_CLIENTE_GENERICO, NOMBRE_CLIENTE_GENERICO, '0000000000', 'Local', 'Cliente genérico', timestamp]);
+    return ID_CLIENTE_GENERICO;
+  } catch (error) {
+    return '2222222';
+  }
+}
+
+function obtenerTotalPedido(idPedido) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheetPedidos = ss.getSheetByName(CONFIG.SHEETS.PEDIDOS);
+    
+    if (!sheetPedidos) return { success: false, total: 0 };
+    
+    const data = sheetPedidos.getDataRange().getValues();
+    const idPedidoStr = String(idPedido).trim().toUpperCase();
+    
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim().toUpperCase() === idPedidoStr) {
+        return {
+          success: true,
+          subtotal: Number(data[i][8]) || 0,
+          descuento: Number(data[i][9]) || 0,
+          total: Number(data[i][10]) || 0
+        };
+      }
+    }
+    
+    return { success: false, total: 0, message: 'Pedido no encontrado' };
+  } catch (error) {
+    Logger.log('Error en obtenerTotalPedido: ' + error.toString());
+    return { success: false, total: 0, message: error.toString() };
+  }
+}
+
+// ============================================
+// V16: UNIFICACIÓN DE IDENTIDAD - CLIENTE UNIFICADO
+// ============================================
+function buscarOcrearClienteUnificado(datosCliente) {
+  try {
+    if (!datosCliente) {
+      return '2222222';
+    }
+    
+    const celularLimpio = String(datosCliente.telefono || datosCliente.celular || '').replace(/\D/g, '').trim();
+    
+    if (!celularLimpio || celularLimpio.length < 7) {
+      return obtenerOCrearClienteGenerico();
+    }
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+    
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
+      const headers = ['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro', 'Email', 'Password', 'Rol', 'Activo'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const tieneColumnaEmail = headers.length >= 7;
+    
+    for (let i = 1; i < data.length; i++) {
+      const celularEnFila = String(data[i][2] || '').replace(/\D/g, '').trim();
+      
+      if (celularEnFila === celularLimpio) {
+        const fila = i + 1;
+        let actualizado = false;
+        
+        if (datosCliente.nombre && datosCliente.nombre.trim()) {
+          const nombreActual = String(data[i][1] || '').trim();
+          if (!nombreActual || nombreActual === 'CONSUMIDOR FINAL') {
+            sheet.getRange(fila, 2).setValue(datosCliente.nombre.trim());
+            actualizado = true;
+          }
+        }
+        
+        if (datosCliente.direccion && datosCliente.direccion.trim()) {
+          sheet.getRange(fila, 4).setValue(datosCliente.direccion.trim());
+          actualizado = true;
+        }
+        
+        if (tieneColumnaEmail && datosCliente.email && datosCliente.email.trim()) {
+          const emailActual = String(data[i][6] || '').trim();
+          if (!emailActual) {
+            sheet.getRange(fila, 7).setValue(datosCliente.email.trim().toLowerCase());
+            actualizado = true;
+          }
+        }
+        
+        if (actualizado) {
+          Logger.log('V16 Cliente actualizado: ' + celularLimpio);
+        }
+        
+        return celularLimpio;
+      }
+    }
+    
+    const timestamp = obtenerTimestampColombia();
+    const idCliente = celularLimpio;
+    
+    if (tieneColumnaEmail) {
+      const newRow = [
+        idCliente,
+        datosCliente.nombre || '',
+        celularLimpio,
+        datosCliente.direccion || '',
+        datosCliente.notas || '',
+        timestamp,
+        datosCliente.email ? datosCliente.email.trim().toLowerCase() : '',
+        datosCliente.password || '',
+        'Cliente',
+        true
+      ];
+      sheet.appendRow(newRow);
+    } else {
+      const newRow = [
+        idCliente,
+        datosCliente.nombre || '',
+        celularLimpio,
+        datosCliente.direccion || '',
+        datosCliente.notas || '',
+        timestamp
+      ];
+      sheet.appendRow(newRow);
+    }
+    
+    Logger.log('V16 Cliente nuevo creado: ' + idCliente);
+    return idCliente;
+    
+  } catch (error) {
+    Logger.log('Error en buscarOcrearClienteUnificado: ' + error.toString());
+    return obtenerOCrearClienteGenerico();
+  }
+}
+
+function obtenerDatosCliente(idCliente) {
+  try {
+    if (!idCliente || idCliente === '2222222') {
+      return {
+        success: true,
+        cliente: {
+          id: '2222222',
+          nombre: 'CONSUMIDOR FINAL',
+          celular: '-',
+          direccion: '-',
+          email: '-',
+          rol: 'Cliente'
+        }
+      };
+    }
+    
+    const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+    
+    if (!sheet) {
+      return { success: false, cliente: null };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const idClienteStr = String(idCliente).replace(/\D/g, '').trim();
+    
+    for (let i = 1; i < data.length; i++) {
+      const idEnFila = String(data[i][0] || '').replace(/\D/g, '').trim();
+      const celularEnFila = String(data[i][2] || '').replace(/\D/g, '').trim();
+      
+      if (idEnFila === idClienteStr || celularEnFila === idClienteStr) {
+        return {
+          success: true,
+          cliente: {
+            id: String(data[i][0]),
+            nombre: String(data[i][1] || 'Sin nombre'),
+            celular: String(data[i][2] || '-'),
+            direccion: String(data[i][3] || '-'),
+            notas: String(data[i][4] || ''),
+            email: data[i][6] ? String(data[i][6]) : '-',
+            rol: data[i][8] ? String(data[i][8]) : 'Cliente'
+          }
+        };
+      }
+    }
+    
+    return { success: false, cliente: null };
+    
+  } catch (error) {
+    Logger.log('Error en obtenerDatosCliente: ' + error.toString());
+    return { success: false, cliente: null };
+  }
+}
+
+Logger.log('V16 Funciones con unificación de identidad cargadas');
+
+// ============================================
+// FASE 9.1 - API CRUD ADMINISTRATIVA
+// Gestion de Usuarios y Clientes
+// CloudPyme POS V18+ | 2026-01-26
+// ============================================
+
+/**
+ * Columnas de la hoja USUARIOS:
+ * 0: ID | 1: Email | 2: Password | 3: Nombre | 4: Telefono
+ * 5: Direccion | 6: Fecha_Registro | 7: Rol | 8: Activo | 9: Permisos | 10: Pin_Acceso
+ *
+ * Columnas adicionales para soft delete:
+ * 11: Fecha_Baja | 12: Usuario_Que_Elimino
+ */
+
+// Roles permitidos para usuarios internos
+const ROLES_ADMIN_PERMITIDOS = ['Administrador', 'Mesero', 'Cocina', 'Domiciliario'];
+
+/**
+ * FUNCION PRINCIPAL: Gestion de Usuarios Internos
+ * @param {string} accion - 'leer', 'guardar', 'eliminar'
+ * @param {Object} datos - Datos del usuario o configuracion
+ * @param {Object} usuarioSolicitante - Usuario que realiza la accion (para validar permisos)
+ * @returns {Object} {success: boolean, data/error: any}
+ */
+function adminGestionarUsuarios(accion, datos, usuarioSolicitante) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    // Validar que el usuario solicitante sea Administrador
+    if (!usuarioSolicitante || !esRolSuperAdmin(usuarioSolicitante.rol)) {
+      Logger.log('⛔ Acceso denegado: Usuario sin permisos de administrador');
+      return { success: false, error: 'Acceso denegado. Se requieren permisos de Administrador.' };
+    }
+
+    lock.waitLock(5000);
+    Logger.log('🔧 ADMIN - Gestion Usuarios | Accion: ' + accion);
+
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+
+    if (!sheet) {
+      return { success: false, error: 'Hoja USUARIOS no encontrada' };
+    }
+
+    var resultado;
+
+    switch (accion.toLowerCase()) {
+      case 'leer':
+        resultado = _adminLeerUsuarios(sheet);
+        break;
+      case 'guardar':
+        resultado = _adminGuardarUsuario(sheet, datos, usuarioSolicitante);
+        break;
+      case 'eliminar':
+        resultado = _adminEliminarUsuario(sheet, datos, usuarioSolicitante);
+        break;
+      default:
+        return { success: false, error: 'Accion no reconocida: ' + accion };
+    }
+
+    SpreadsheetApp.flush(); // Asegurar escritura atomica
+    return resultado;
+
+  } catch (error) {
+    Logger.log('❌ Error en adminGestionarUsuarios: ' + error.toString());
+    return { success: false, error: 'Error interno: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * LEER: Obtiene todos los usuarios internos (roles admin)
+ * SEGURIDAD: Oculta contraseñas y PINs
+ */
+function _adminLeerUsuarios(sheet) {
+  try {
+    var data = sheet.getDataRange().getValues();
+    var usuarios = [];
+
+    // Empezar desde fila 1 (saltando encabezados)
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var rol = String(row[7] || '').trim();
+
+      // Solo incluir usuarios con roles internos (no clientes de App)
+      if (esRolInterno(rol) || rol === 'Mesero') {
+        usuarios.push({
+          id: String(row[0] || ''),
+          email: String(row[1] || ''),
+          password: row[2] ? '******' : '', // Ocultar password
+          nombre: String(row[3] || ''),
+          telefono: String(row[4] || ''),
+          direccion: String(row[5] || ''),
+          fechaRegistro: row[6] ? (row[6] instanceof Date ? row[6].toISOString() : String(row[6])) : '',
+          rol: rol,
+          activo: row[8] === true || row[8] === 'true' || row[8] === 'TRUE',
+          permisos: String(row[9] || ''),
+          pinAcceso: row[10] ? '****' : '', // Ocultar PIN
+          fechaBaja: row[11] ? (row[11] instanceof Date ? row[11].toISOString() : String(row[11])) : '',
+          usuarioQueElimino: String(row[12] || ''),
+          filaSheet: i + 1 // Para referencia interna
+        });
+      }
+    }
+
+    // Ordenar: Activos primero, luego por nombre
+    usuarios.sort(function(a, b) {
+      if (a.activo !== b.activo) {
+        return a.activo ? -1 : 1; // Activos primero
+      }
+      return (a.nombre || '').localeCompare(b.nombre || '');
+    });
+
+    Logger.log('✅ Usuarios internos leidos: ' + usuarios.length);
+    return { success: true, data: usuarios, total: usuarios.length };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminLeerUsuarios: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * GUARDAR: Crear o actualizar usuario interno
+ * Valida email/telefono unicos, maneja credenciales segun rol
+ */
+function _adminGuardarUsuario(sheet, datos, usuarioSolicitante) {
+  try {
+    // Validar datos requeridos
+    if (!datos) {
+      return { success: false, error: 'Datos de usuario requeridos' };
+    }
+
+    var nombre = String(datos.nombre || '').trim();
+    var email = String(datos.email || '').trim().toLowerCase();
+    var telefono = String(datos.telefono || '').replace(/\D/g, '').trim();
+    var rol = String(datos.rol || '').trim();
+    var credencial = String(datos.credencial || '').trim();
+    var activo = datos.activo !== false && datos.activo !== 'false';
+    var idActual = datos.idActual ? String(datos.idActual).trim() : null;
+    var direccion = String(datos.direccion || '').trim();
+
+    // ═══════════════════════════════════════════
+    // VALIDACIONES OBLIGATORIAS
+    // ═══════════════════════════════════════════
+
+    // Validar nombre
+    if (!nombre || nombre.length < 2) {
+      return { success: false, error: 'El nombre es obligatorio (minimo 2 caracteres)' };
+    }
+
+    // Validar rol permitido
+    if (!ROLES_ADMIN_PERMITIDOS.includes(rol)) {
+      return { success: false, error: 'Rol no valido. Permitidos: ' + ROLES_ADMIN_PERMITIDOS.join(', ') };
+    }
+
+    // Validar email (obligatorio para todos excepto Mesero)
+    if (rol !== 'Mesero') {
+      if (!email || !_validarFormatoEmail(email)) {
+        return { success: false, error: 'Email valido es obligatorio para rol ' + rol };
+      }
+    }
+
+    // Validar telefono (numerico, minimo 7 digitos)
+    if (telefono && telefono.length < 7) {
+      return { success: false, error: 'Telefono debe tener minimo 7 digitos' };
+    }
+
+    // Validar credencial segun rol
+    var validacionCredencial = _validarCredencialSegunRol(rol, credencial, idActual);
+    if (!validacionCredencial.valido) {
+      return { success: false, error: validacionCredencial.error };
+    }
+
+    // Obtener datos actuales para validar unicidad
+    var data = sheet.getDataRange().getValues();
+
+    // Validar email unico (si no es Mesero)
+    if (rol !== 'Mesero' && email) {
+      for (var i = 1; i < data.length; i++) {
+        var emailExistente = String(data[i][1] || '').trim().toLowerCase();
+        var idExistente = String(data[i][0] || '').trim();
+
+        if (emailExistente === email && idExistente !== idActual) {
+          return { success: false, error: 'El email "' + email + '" ya esta registrado' };
+        }
+      }
+    }
+
+    // Validar telefono unico (si se proporciona)
+    if (telefono) {
+      for (var j = 1; j < data.length; j++) {
+        var telExistente = String(data[j][4] || '').replace(/\D/g, '').trim();
+        var idExistenteTel = String(data[j][0] || '').trim();
+
+        if (telExistente === telefono && idExistenteTel !== idActual) {
+          return { success: false, error: 'El telefono "' + telefono + '" ya esta registrado' };
+        }
+      }
+    }
+
+    // Validar PIN unico (si es Mesero o Admin)
+    if ((rol === 'Mesero' || rol === 'Administrador') && credencial) {
+      var pinValidacion = _validarPinUnico(sheet, data, credencial, idActual);
+      if (!pinValidacion.valido) {
+        return { success: false, error: pinValidacion.error };
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    // PREPARAR DATOS SEGUN ROL
+    // ═══════════════════════════════════════════
+
+    var password = '';
+    var pinAcceso = '';
+
+    // Logica de credenciales segun rol
+    if (rol === 'Mesero') {
+      // Mesero: Solo PIN, sin password
+      pinAcceso = credencial;
+      password = '';
+    } else if (rol === 'Cocina' || rol === 'Domiciliario') {
+      // Cocina/Domiciliario: Solo password, sin PIN
+      password = credencial;
+      pinAcceso = '';
+    } else if (rol === 'Administrador') {
+      // Administrador: Ambos (PIN y Password)
+      // Credencial principal va a password, y tambien a PIN
+      password = credencial;
+      pinAcceso = credencial.length === 4 ? credencial : '';
+
+      // Si se proporciona PIN separado en datos.pin
+      if (datos.pin && String(datos.pin).length === 4) {
+        pinAcceso = String(datos.pin);
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    // CREAR O ACTUALIZAR
+    // ═══════════════════════════════════════════
+
+    if (idActual) {
+      // ACTUALIZAR usuario existente
+      var filaActualizar = -1;
+
+      for (var k = 1; k < data.length; k++) {
+        if (String(data[k][0]).trim() === idActual) {
+          filaActualizar = k + 1; // +1 porque getRange es 1-indexed
+          break;
+        }
+      }
+
+      if (filaActualizar === -1) {
+        return { success: false, error: 'Usuario con ID "' + idActual + '" no encontrado' };
+      }
+
+      // Actualizar campos (mantener password/pin si no se proporciona nueva credencial)
+      sheet.getRange(filaActualizar, 2).setValue(email); // Email
+
+      // Solo actualizar password si se proporciona nueva credencial
+      if (credencial) {
+        sheet.getRange(filaActualizar, 3).setValue(password);
+      }
+
+      sheet.getRange(filaActualizar, 4).setValue(nombre);
+      sheet.getRange(filaActualizar, 5).setValue(telefono);
+      sheet.getRange(filaActualizar, 6).setValue(direccion);
+      sheet.getRange(filaActualizar, 8).setValue(rol);
+      sheet.getRange(filaActualizar, 9).setValue(activo);
+
+      // Solo actualizar PIN si se proporciona nueva credencial
+      if (credencial) {
+        sheet.getRange(filaActualizar, 11).setValue(pinAcceso);
+      }
+
+      Logger.log('✅ Usuario actualizado: ' + idActual + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: idActual, nombre: nombre, rol: rol, accion: 'actualizado' },
+        message: 'Usuario "' + nombre + '" actualizado correctamente'
+      };
+
+    } else {
+      // CREAR nuevo usuario
+      var timestamp = new Date().getTime();
+      var nuevoId = 'USR_' + timestamp;
+      var fechaRegistro = obtenerTimestampColombia();
+
+      // Asegurar que hay suficientes columnas (13 para incluir campos de baja)
+      var headers = data[0];
+      if (headers.length < 13) {
+        // Agregar columnas faltantes si no existen
+        if (headers.length <= 11) {
+          sheet.getRange(1, 12).setValue('Fecha_Baja');
+        }
+        if (headers.length <= 12) {
+          sheet.getRange(1, 13).setValue('Usuario_Que_Elimino');
+        }
+      }
+
+      var nuevaFila = [
+        nuevoId,           // 0: ID
+        email,             // 1: Email
+        password,          // 2: Password
+        nombre,            // 3: Nombre
+        telefono,          // 4: Telefono
+        direccion,         // 5: Direccion
+        fechaRegistro,     // 6: Fecha_Registro
+        rol,               // 7: Rol
+        activo,            // 8: Activo
+        '',                // 9: Permisos
+        pinAcceso,         // 10: Pin_Acceso
+        '',                // 11: Fecha_Baja
+        ''                 // 12: Usuario_Que_Elimino
+      ];
+
+      sheet.appendRow(nuevaFila);
+
+      Logger.log('✅ Usuario creado: ' + nuevoId + ' | Rol: ' + rol + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: nuevoId, nombre: nombre, rol: rol, accion: 'creado' },
+        message: 'Usuario "' + nombre + '" creado correctamente'
+      };
+    }
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminGuardarUsuario: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * ELIMINAR: Soft delete - Marca como inactivo
+ */
+function _adminEliminarUsuario(sheet, datos, usuarioSolicitante) {
+  try {
+    var idEliminar = datos.id ? String(datos.id).trim() : null;
+
+    if (!idEliminar) {
+      return { success: false, error: 'ID de usuario requerido para eliminar' };
+    }
+
+    // No permitir auto-eliminacion
+    if (idEliminar === usuarioSolicitante.id) {
+      return { success: false, error: 'No puede desactivar su propia cuenta' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+    var filaEliminar = -1;
+    var nombreUsuario = '';
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === idEliminar) {
+        filaEliminar = i + 1;
+        nombreUsuario = String(data[i][3] || 'Usuario');
+        break;
+      }
+    }
+
+    if (filaEliminar === -1) {
+      return { success: false, error: 'Usuario con ID "' + idEliminar + '" no encontrado' };
+    }
+
+    // Soft delete: Marcar como inactivo
+    var fechaBaja = obtenerTimestampColombia();
+
+    sheet.getRange(filaEliminar, 9).setValue(false); // Activo = FALSE
+    sheet.getRange(filaEliminar, 12).setValue(fechaBaja); // Fecha_Baja
+    sheet.getRange(filaEliminar, 13).setValue(usuarioSolicitante.id + ' - ' + usuarioSolicitante.nombre); // Usuario_Que_Elimino
+
+    Logger.log('✅ Usuario desactivado: ' + idEliminar + ' | Por: ' + usuarioSolicitante.nombre);
+    return {
+      success: true,
+      data: { id: idEliminar, nombre: nombreUsuario, accion: 'desactivado' },
+      message: 'Usuario "' + nombreUsuario + '" desactivado correctamente'
+    };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminEliminarUsuario: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * Validar formato de email
+ */
+function _validarFormatoEmail(email) {
+  var regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(email);
+}
+
+/**
+ * Validar credencial segun el rol
+ */
+function _validarCredencialSegunRol(rol, credencial, idActual) {
+  // Si es actualizacion y no se proporciona credencial, es valido (mantiene la anterior)
+  if (idActual && !credencial) {
+    return { valido: true };
+  }
+
+  // Para nuevos usuarios, credencial es obligatoria
+  if (!idActual && !credencial) {
+    return { valido: false, error: 'Credencial obligatoria para nuevo usuario' };
+  }
+
+  if (!credencial) {
+    return { valido: true };
+  }
+
+  if (rol === 'Mesero') {
+    // PIN de 4 digitos
+    if (!/^\d{4}$/.test(credencial)) {
+      return { valido: false, error: 'El PIN para Mesero debe ser de 4 digitos numericos' };
+    }
+  } else if (rol === 'Cocina' || rol === 'Domiciliario') {
+    // Password minimo 4 caracteres
+    if (credencial.length < 4) {
+      return { valido: false, error: 'La contraseña debe tener minimo 4 caracteres' };
+    }
+  } else if (rol === 'Administrador') {
+    // Password minimo 4 caracteres
+    if (credencial.length < 4) {
+      return { valido: false, error: 'La contraseña de Administrador debe tener minimo 4 caracteres' };
+    }
+  }
+
+  return { valido: true };
+}
+
+/**
+ * Validar que el PIN no este duplicado
+ */
+function _validarPinUnico(sheet, data, pin, idActual) {
+  for (var i = 1; i < data.length; i++) {
+    var pinExistente = String(data[i][10] || '').trim();
+    var idExistente = String(data[i][0] || '').trim();
+    var activo = data[i][8];
+
+    // Solo validar contra usuarios activos
+    if (activo === true || activo === 'true') {
+      if (pinExistente === pin && idExistente !== idActual) {
+        return { valido: false, error: 'El PIN "' + pin + '" ya esta asignado a otro usuario' };
+      }
+    }
+  }
+  return { valido: true };
+}
+
+// ============================================
+// FUNCION: Gestion de Clientes
+// ============================================
+
+/**
+ * Columnas de la hoja CLIENTES:
+ * 0: ID_Key_Clientes | 1: Nombre_Completo | 2: Celular | 3: Domicilio
+ * 4: Notas_Adicionales | 5: Fecha_Registro | 6: Email | 7: Password
+ * 8: Rol | 9: Activo
+ */
+
+/**
+ * FUNCION PRINCIPAL: Gestion de Clientes
+ * @param {string} accion - 'leer', 'guardar', 'eliminar'
+ * @param {Object} datos - Datos del cliente
+ * @param {Object} usuarioSolicitante - Usuario que realiza la accion
+ * @returns {Object} {success: boolean, data/error: any}
+ */
+function adminGestionarClientes(accion, datos, usuarioSolicitante) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    // Validar permisos de administrador
+    if (!usuarioSolicitante || !esRolSuperAdmin(usuarioSolicitante.rol)) {
+      Logger.log('⛔ Acceso denegado: Usuario sin permisos de administrador');
+      return { success: false, error: 'Acceso denegado. Se requieren permisos de Administrador.' };
+    }
+
+    lock.waitLock(5000);
+    Logger.log('🔧 ADMIN - Gestion Clientes | Accion: ' + accion);
+
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+
+    if (!sheet) {
+      // Crear hoja si no existe
+      sheet = ss.insertSheet(CONFIG.SHEETS.CLIENTES);
+      var headers = ['ID_Key_Clientes', 'Nombre_Completo', 'Celular', 'Domicilio', 'Notas_Adicionales', 'Fecha_Registro', 'Email', 'Password', 'Rol', 'Activo'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+      Logger.log('✅ Hoja CLIENTES creada');
+    }
+
+    var resultado;
+
+    switch (accion.toLowerCase()) {
+      case 'leer':
+        resultado = _adminLeerClientes(sheet, datos);
+        break;
+      case 'guardar':
+        resultado = _adminGuardarCliente(sheet, datos, usuarioSolicitante);
+        break;
+      case 'eliminar':
+        resultado = _adminEliminarCliente(sheet, datos, usuarioSolicitante);
+        break;
+      default:
+        return { success: false, error: 'Accion no reconocida: ' + accion };
+    }
+
+    SpreadsheetApp.flush();
+    return resultado;
+
+  } catch (error) {
+    Logger.log('❌ Error en adminGestionarClientes: ' + error.toString());
+    return { success: false, error: 'Error interno: ' + error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * LEER: Obtiene lista de clientes con paginacion opcional
+ */
+function _adminLeerClientes(sheet, filtros) {
+  try {
+    var data = sheet.getDataRange().getValues();
+    var clientes = [];
+
+    // Parametros de paginacion
+    var pagina = (filtros && filtros.pagina) ? parseInt(filtros.pagina) : 1;
+    var porPagina = (filtros && filtros.porPagina) ? parseInt(filtros.porPagina) : 50;
+    var busqueda = (filtros && filtros.busqueda) ? String(filtros.busqueda).toLowerCase().trim() : '';
+
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      var nombre = String(row[1] || '').toLowerCase();
+      var celular = String(row[2] || '');
+      var email = String(row[6] || '').toLowerCase();
+
+      // Filtro de busqueda
+      if (busqueda) {
+        if (nombre.indexOf(busqueda) === -1 &&
+            celular.indexOf(busqueda) === -1 &&
+            email.indexOf(busqueda) === -1) {
+          continue;
+        }
+      }
+
+      clientes.push({
+        id: String(row[0] || ''),
+        nombre: String(row[1] || ''),
+        celular: String(row[2] || ''),
+        domicilio: String(row[3] || ''),
+        notas: String(row[4] || ''),
+        fechaRegistro: row[5] ? (row[5] instanceof Date ? row[5].toISOString() : String(row[5])) : '',
+        email: String(row[6] || ''),
+        rol: String(row[8] || 'Cliente'),
+        activo: row[9] !== false && row[9] !== 'false' && row[9] !== 'FALSE',
+        filaSheet: i + 1
+      });
+    }
+
+    // Ordenar por nombre
+    clientes.sort(function(a, b) {
+      return (a.nombre || '').localeCompare(b.nombre || '');
+    });
+
+    // Calcular paginacion
+    var totalClientes = clientes.length;
+    var totalPaginas = Math.ceil(totalClientes / porPagina);
+    var inicio = (pagina - 1) * porPagina;
+    var fin = inicio + porPagina;
+    var clientesPaginados = clientes.slice(inicio, fin);
+
+    Logger.log('✅ Clientes leidos: ' + clientesPaginados.length + ' de ' + totalClientes);
+    return {
+      success: true,
+      data: clientesPaginados,
+      total: totalClientes,
+      pagina: pagina,
+      totalPaginas: totalPaginas,
+      porPagina: porPagina
+    };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminLeerClientes: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * GUARDAR: Crear o actualizar cliente
+ */
+function _adminGuardarCliente(sheet, datos, usuarioSolicitante) {
+  try {
+    if (!datos) {
+      return { success: false, error: 'Datos de cliente requeridos' };
+    }
+
+    var nombre = String(datos.nombre || '').trim();
+    var celular = String(datos.celular || '').replace(/\D/g, '').trim();
+    var domicilio = String(datos.domicilio || '').trim();
+    var email = String(datos.email || '').trim().toLowerCase();
+    var notas = String(datos.notas || '').trim();
+    var idActual = datos.id ? String(datos.id).trim() : null;
+
+    // Validaciones
+    if (!nombre || nombre.length < 2) {
+      return { success: false, error: 'Nombre es obligatorio (minimo 2 caracteres)' };
+    }
+
+    if (!celular || celular.length < 7) {
+      return { success: false, error: 'Celular es obligatorio (minimo 7 digitos)' };
+    }
+
+    // Validar celular unico
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var celularExistente = String(data[i][2] || '').replace(/\D/g, '').trim();
+      var idExistente = String(data[i][0] || '').trim();
+
+      if (celularExistente === celular && idExistente !== idActual) {
+        return { success: false, error: 'El celular "' + celular + '" ya esta registrado' };
+      }
+    }
+
+    if (idActual) {
+      // ACTUALIZAR cliente existente
+      var filaActualizar = -1;
+
+      for (var j = 1; j < data.length; j++) {
+        if (String(data[j][0]).trim() === idActual) {
+          filaActualizar = j + 1;
+          break;
+        }
+      }
+
+      if (filaActualizar === -1) {
+        return { success: false, error: 'Cliente con ID "' + idActual + '" no encontrado' };
+      }
+
+      // Actualizar campos editables (NO modificar ID ni Fecha_Registro)
+      sheet.getRange(filaActualizar, 2).setValue(nombre);
+      sheet.getRange(filaActualizar, 3).setValue(celular);
+      sheet.getRange(filaActualizar, 4).setValue(domicilio);
+      sheet.getRange(filaActualizar, 5).setValue(notas);
+      sheet.getRange(filaActualizar, 7).setValue(email);
+
+      Logger.log('✅ Cliente actualizado: ' + idActual + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: idActual, nombre: nombre, accion: 'actualizado' },
+        message: 'Cliente "' + nombre + '" actualizado correctamente'
+      };
+
+    } else {
+      // CREAR nuevo cliente
+      var nuevoId = celular; // Usar celular como ID (patron existente)
+      var fechaRegistro = obtenerTimestampColombia();
+
+      var nuevaFila = [
+        nuevoId,           // 0: ID_Key_Clientes
+        nombre,            // 1: Nombre_Completo
+        celular,           // 2: Celular
+        domicilio,         // 3: Domicilio
+        notas,             // 4: Notas_Adicionales
+        fechaRegistro,     // 5: Fecha_Registro
+        email,             // 6: Email
+        '',                // 7: Password
+        'Cliente',         // 8: Rol
+        true               // 9: Activo
+      ];
+
+      sheet.appendRow(nuevaFila);
+
+      Logger.log('✅ Cliente creado: ' + nuevoId + ' | Por: ' + usuarioSolicitante.nombre);
+      return {
+        success: true,
+        data: { id: nuevoId, nombre: nombre, accion: 'creado' },
+        message: 'Cliente "' + nombre + '" creado correctamente'
+      };
+    }
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminGuardarCliente: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * ELIMINAR: Soft delete de cliente
+ */
+function _adminEliminarCliente(sheet, datos, usuarioSolicitante) {
+  try {
+    var idEliminar = datos.id ? String(datos.id).trim() : null;
+
+    if (!idEliminar) {
+      return { success: false, error: 'ID de cliente requerido para eliminar' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+    var filaEliminar = -1;
+    var nombreCliente = '';
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === idEliminar) {
+        filaEliminar = i + 1;
+        nombreCliente = String(data[i][1] || 'Cliente');
+        break;
+      }
+    }
+
+    if (filaEliminar === -1) {
+      return { success: false, error: 'Cliente con ID "' + idEliminar + '" no encontrado' };
+    }
+
+    // Soft delete: Marcar como inactivo
+    sheet.getRange(filaEliminar, 10).setValue(false); // Activo = FALSE
+
+    Logger.log('✅ Cliente desactivado: ' + idEliminar + ' | Por: ' + usuarioSolicitante.nombre);
+    return {
+      success: true,
+      data: { id: idEliminar, nombre: nombreCliente, accion: 'desactivado' },
+      message: 'Cliente "' + nombreCliente + '" desactivado correctamente'
+    };
+
+  } catch (error) {
+    Logger.log('❌ Error en _adminEliminarCliente: ' + error.toString());
+    return { success: false, error: error.toString() };
+  }
+}
+
+/**
+ * FUNCION AUXILIAR: Reactivar usuario/cliente desactivado
+ */
+function adminReactivarEntidad(tipo, id, usuarioSolicitante) {
+  var lock = LockService.getScriptLock();
+
+  try {
+    if (!usuarioSolicitante || !esRolSuperAdmin(usuarioSolicitante.rol)) {
+      return { success: false, error: 'Acceso denegado' };
+    }
+
+    lock.waitLock(5000);
+
+    var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+    var sheet;
+    var colActivo;
+
+    if (tipo === 'usuario') {
+      sheet = ss.getSheetByName(CONFIG.SHEETS.USUARIOS);
+      colActivo = 9; // Columna Activo en USUARIOS
+    } else if (tipo === 'cliente') {
+      sheet = ss.getSheetByName(CONFIG.SHEETS.CLIENTES);
+      colActivo = 10; // Columna Activo en CLIENTES
+    } else {
+      return { success: false, error: 'Tipo no valido. Use "usuario" o "cliente"' };
+    }
+
+    if (!sheet) {
+      return { success: false, error: 'Hoja no encontrada' };
+    }
+
+    var data = sheet.getDataRange().getValues();
+
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === String(id).trim()) {
+        sheet.getRange(i + 1, colActivo).setValue(true);
+
+        // Limpiar fecha de baja si es usuario
+        if (tipo === 'usuario') {
+          sheet.getRange(i + 1, 12).setValue(''); // Fecha_Baja
+          sheet.getRange(i + 1, 13).setValue(''); // Usuario_Que_Elimino
+        }
+
+        SpreadsheetApp.flush();
+        Logger.log('✅ ' + tipo + ' reactivado: ' + id);
+        return { success: true, message: tipo + ' reactivado correctamente' };
+      }
+    }
+
+    return { success: false, error: tipo + ' no encontrado' };
+
+  } catch (error) {
+    Logger.log('❌ Error en adminReactivarEntidad: ' + error.toString());
+    return { success: false, error: error.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+Logger.log('✅ FASE 9.1 - API CRUD Administrativa cargada correctamente');
